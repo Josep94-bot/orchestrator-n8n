@@ -1,1 +1,27 @@
 
+[
+  {
+    "event_id": "test-1",
+    "source": "lab-sample",
+    "asset_id": "unknown",
+    "indicator": "45.77.12.34",
+    "indicator_type": "ip",
+    "severity": "high",
+    "rule_id": "rule-test",
+    "confidence": 0.9,
+    "ts_epoch": 1759035471373,
+    "raw_event": { "note": "sample IOC for testing n8n" }
+  },
+  {
+    "event_id": "test-2",
+    "source": "lab-sample",
+    "asset_id": "unknown",
+    "indicator": "badsite.example.com",
+    "indicator_type": "domain",
+    "severity": "medium",
+    "rule_id": "rule-test-2",
+    "confidence": 0.7,
+    "ts_epoch": 1759035471373,
+    "raw_event": { "note": "sample domain for testing n8n" }
+  }
+]
