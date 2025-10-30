@@ -2,9 +2,6 @@
 
 # Orquestador de Agentes de IA para Gestión de Incidentes (SOC)
 
-<img src="./Orchestrator/docs/Screenshot (33).png" alt="Flujo n8n – Investigation Summarization" width="1000">
-
-<img src="./Orchestrator/docs/Diagrama de seguridad de red(2).png" alt="Topología SOC" width="900">
 
 Orquestador basado en **n8n** + utilidades JS/TS para **ingesta, triage (LLM/HITL) y respuesta** ante incidentes de ciberseguridad (mapeo MITRE, playbooks SOAR). Incluye laboratorio con **Wazuh Manager** y **Active Directory**, más un **CEC (Canonical Event Schema)** para estandarizar eventos.
 ![Flujo Preliminar monitoreo](./Orchestrator/docs/Screenshot%20%2833%29.png)
