@@ -17,15 +17,10 @@ Orquestador basado en **n8n** + utilidades JS/TS para **ingesta, triage (LLM/HIT
 - Métricas operativas (MTTD/MTTR, FPR) y trazabilidad
 
 ## 🧱 Arquitectura (resumen)
-- **Agente de Monitoreo** (n8n): ingesta, normalización (CEC), deduplicación.
-- **Agente de Análisis/Triage**: mapeo MITRE, router LLM vs fast-path.
+- **Agente de Monitoreo y Análisis/Triage** (n8n): ingesta, normalización (CEC), deduplicación; mapeo MITRE, router LLM vs fast-path.
 - **Agente de Respuesta**: playbooks (firewall, tickets, notificaciones).
 - **Orquestador/KPIs**: consolidación de métricas y auditoría.
 
 > Ver detalles C1–C4 en [`docs/10-architecture-c4.md`](docs/10-architecture-c4.md).
 
-## 🚀 Puesta en marcha (Docker)
-```bash
-cd docker
-cp env.example .env
-docker compose up -d
+
