@@ -7,7 +7,7 @@ Orquestador basado en **n8n** + utilidades JS/TS para **ingesta, triage (LLM/HIT
 ![Flujo Preliminar monitoreo](./Orchestrator/docs/Screenshot%20%2833%29.png)
 
 
-![Topología SOC](./Orchestrator/docs/Diagrama%20de%20seguridad%20de%20red%282%29.png)
+![Topología SOC](Orchestrator/docs/Topología Laboratorio SOC.png)
 
 
 ## ✨ Objetivos
