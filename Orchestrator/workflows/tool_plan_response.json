@@ -1,0 +1,118 @@
+{
+  "name": "tool_plan_response",
+  "nodes": [
+    {
+      "parameters": {
+        "inputSource": "passthrough"
+      },
+      "type": "n8n-nodes-base.executeWorkflowTrigger",
+      "typeVersion": 1.1,
+      "position": [
+        -1936,
+        144
+      ],
+      "id": "63f94343-9980-4ebb-adbd-96e291f48f37",
+      "name": "When Executed by Another Workflow"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Loop over input items and add a new field called 'myNewField' to the JSON of each one\nfor (const item of $input.all()) {\n  item.json.myNewField = 1;\n}\n\nreturn $input.all();"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -1728,
+        144
+      ],
+      "id": "9f7b4fd1-e8b0-4ce6-acac-cbbfe6a4acf6",
+      "name": "tool_input_unwrap"
+    },
+    {
+      "parameters": {
+        "workflowId": {
+          "__rl": true,
+          "value": "OUJYYQwzmpM1R3SM",
+          "mode": "list",
+          "cachedResultUrl": "/workflow/OUJYYQwzmpM1R3SM",
+          "cachedResultName": "ResponsePlan"
+        },
+        "workflowInputs": {
+          "mappingMode": "defineBelow",
+          "value": {},
+          "matchingColumns": [],
+          "schema": [],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": true
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1.3,
+      "position": [
+        -1520,
+        144
+      ],
+      "id": "3a9bc932-513f-4a50-bbca-95fa687bb489",
+      "name": "Call ResponsePlan"
+    },
+    {
+      "parameters": {
+        "jsCode": "// return_tool_output\n// Devuelve el resultado real del sub-workflow ResponsePlan.\n// Si ResponsePlan devolvió varios items, nos quedamos con el primero.\n\nconst items = $input.all();\nif (!items.length) return [{ json: {} }];\n\nconst first = items[0]?.json ?? {};\nreturn [{ json: first }];\n"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -1312,
+        144
+      ],
+      "id": "ecaecb58-c547-4759-80f9-8ff2d36fa09c",
+      "name": "return_tool_output"
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "When Executed by Another Workflow": {
+      "main": [
+        [
+          {
+            "node": "tool_input_unwrap",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "tool_input_unwrap": {
+      "main": [
+        [
+          {
+            "node": "Call ResponsePlan",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Call ResponsePlan": {
+      "main": [
+        [
+          {
+            "node": "return_tool_output",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "versionId": "595aa01c-e5b3-4d7b-8f13-7b8ffcf5679f",
+  "meta": {
+    "instanceId": "5f4321b383184a4332b5d1e5cb6e70ea61441780fd28eb1fe8c95676a3e6f306"
+  },
+  "id": "B6ml0xnoGo49CwEq",
+  "tags": []
+}

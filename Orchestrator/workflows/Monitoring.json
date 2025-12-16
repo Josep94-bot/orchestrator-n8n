@@ -1,0 +1,174 @@
+{
+  "name": "Monitoring",
+  "nodes": [
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "INSERT INTO dbo.cec_events (\n  campaign_id,\n  scenario_id,\n  wazuh_alert_id,\n  event_timestamp,\n  src_ip,\n  dst_ip,\n  src_port,\n  dst_port,\n  agent_name,\n  rule_id,\n  rule_level,\n  triage_severity,\n  triage_priority,\n  triage_risk,\n  host_id\n)\nVALUES (\n  {{ $json.campaign_id }},                 -- INT\n  {{ $json.scenario_id }},                -- INT\n  '{{ $json.wazuh_alert_id ?? '' }}',     -- NVARCHAR (puede ir vacío)\n\n  '{{ $json.event_timestamp }}',          -- DATETIME2 (ISO desde Code node)\n\n  '{{ $json.src_ip ?? '' }}',             -- NVARCHAR\n  '{{ $json.dst_ip ?? '' }}',             -- NVARCHAR\n\n  -- Puertos: si vienen null -> SQL NULL, si vienen número -> número\n  {{ $json.src_port !== null && $json.src_port !== undefined\n       ? $json.src_port\n       : 'NULL' }},                       -- INT NULLABLE\n\n  {{ $json.dst_port !== null && $json.dst_port !== undefined\n       ? $json.dst_port\n       : 'NULL' }},                       -- INT NULLABLE\n\n  '{{ $json.agent_name ?? '' }}',         -- NVARCHAR\n\n  -- rule_id / rule_level: si vienen null, fuerzo 0\n  {{ $json.rule_id   !== null && $json.rule_id   !== undefined ? $json.rule_id   : 0 }},\n  {{ $json.rule_level!== null && $json.rule_level!== undefined ? $json.rule_level: 0 }},\n\n  {{ $json.triage_severity }},            -- INT\n  '{{ $json.triage_priority }}',          -- NVARCHAR\n  {{ $json.triage_risk }},                -- FLOAT / NUMERIC\n\n  {{ $json.host_id !== null && $json.host_id !== undefined\n       ? $json.host_id\n       : 'NULL' }}                        -- INT NULLABLE\n);\n\nSELECT CAST(SCOPE_IDENTITY() AS INT) AS new_event_id;\n\n\n\n"
+      },
+      "type": "n8n-nodes-base.microsoftSql",
+      "typeVersion": 1.1,
+      "position": [
+        384,
+        -16
+      ],
+      "id": "f54f98d9-88d6-4748-bbd0-5e47263e149f",
+      "name": "INSERT cec_events",
+      "alwaysOutputData": false,
+      "credentials": {
+        "microsoftSql": {
+          "id": "59sSXaGtmRRjhh5e",
+          "name": "Microsoft SQL account"
+        }
+      },
+      "onError": "continueErrorOutput"
+    },
+    {
+      "parameters": {
+        "jsCode": "// JSON normalizado original (sale del nodo Code in JavaScript)\nconst normalized = $node[\"CEC Normalization wazuh event and Triage\"].json;\n\n// ID generado por el INSERT en cec_events\nconst eventId = $json.new_event_id;\n\nreturn [{\n  json: {\n    ...normalized,\n    event_id: eventId\n  }\n}];\n"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        576,
+        -16
+      ],
+      "id": "1334a5dc-17bd-4dd9-8b38-37a1c324f9e0",
+      "name": "Attach event_id a normalized",
+      "alwaysOutputData": false
+    },
+    {
+      "parameters": {
+        "jsCode": "// Nodo Code in JavaScript\n// Entrada: alerta de Wazuh recibida por el Webhook de n8n\n// Salida: item normalizado listo para insertar en dbo.cec_events\n\n// ---------------------------------------------------------------------\n// 0. SEPARAR ENVOLTORIO n8n VS ALERTA PURA DE WAZUH\n// ---------------------------------------------------------------------\n//\n// El Webhook de n8n recibe algo así:\n// {\n//   \"headers\": {...},\n//   \"params\": {...},\n//   \"query\": {...},\n//   \"body\": {  <-- ESTA es la alerta de Wazuh\n//      \"timestamp\": \"...\",\n//      \"rule\": {...},\n//      \"agent\": {...},\n//      \"data\": {...},\n//      ...\n//   },\n//   \"webhookUrl\": \"...\",\n//   \"executionMode\": \"production\"\n// }\n//\n// En el flujo normalizado queremos que:\n//\n//   - \"raw\" sea exactamente la alerta de Wazuh (body), porque los\n//     prompts del nodo de investigación usan rutas tipo raw.rule.id,\n//     raw.data.srcip, etc.\n//\n//   - Si por algún motivo no hubiera .body, usamos el json completo.\n//\nconst envelope = $json;                // Envoltorio del Webhook\nconst raw = envelope.body ?? envelope; // Alerta pura de Wazuh\n\n// ---------------------------------------------------------------------\n// 1. FUNCIÓN AUXILIAR NUMÉRICA\n// ---------------------------------------------------------------------\nconst num = (x, d = 0) => {\n  const n = Number(x);\n  return Number.isFinite(n) ? n : d;\n};\n\n// ---------------------------------------------------------------------\n// 2. TRIAGE HEURÍSTICO (IA) SOBRE LA ALERTA \"RAW\"\n// ---------------------------------------------------------------------\nconst ratePps       = num(raw?.metrics?.rate_pps, 0);\nconst uniqueSources = num(raw?.metrics?.unique_src_ips, 1);\nconst durationSec   = num(raw?.metrics?.duration_sec, 0);\nconst assetCritical = Math.max(1, Math.min(5, num(raw?.asset?.criticality, 3)));\nconst confidence    = Math.max(0, Math.min(1, raw?.ai?.confidence ?? 0.7));\n\nconst volScore =\n  ratePps >= 500000 ? 5 :\n  ratePps >= 200000 ? 4 :\n  ratePps >=  50000 ? 3 :\n  ratePps >=  10000 ? 2 : 1;\n\nconst fanoutScore =\n  uniqueSources >= 5000 ? 5 :\n  uniqueSources >= 1000 ? 4 :\n  uniqueSources >=  200 ? 3 :\n  uniqueSources >=   50 ? 2 : 1;\n\nconst persistScore =\n  durationSec >= 3600 ? 5 :\n  durationSec >=  900 ? 4 :\n  durationSec >=  300 ? 3 :\n  durationSec >=   60 ? 2 : 1;\n\nconst impactScore = assetCritical;\n\nconst risk0to5 =\n  0.30 * volScore +\n  0.25 * fanoutScore +\n  0.20 * persistScore +\n  0.25 * impactScore;\n\nlet severity15 = Math.round((risk0to5 / 5) * 15);\nseverity15 = Math.max(0, Math.min(15, severity15));\n\nlet priorityBand = \"Low\";\nif (severity15 >= 4 && severity15 <= 7) {\n  priorityBand = \"Medium\";\n} else if (severity15 >= 8 && severity15 <= 11) {\n  priorityBand = \"High\";\n} else if (severity15 >= 12) {\n  priorityBand = \"Critical\";\n}\n\nconst hitlRequired =\n  (confidence < 0.7) ||\n  (fanoutScore >= 4) ||\n  (impactScore  >= 5) ||\n  (severity15   >= 12);\n\n// ---------------------------------------------------------------------\n// 3. NORMALIZACIÓN PARA cec_events\n// ---------------------------------------------------------------------\n\n// 3.1 Normalización robusta del timestamp\n//\n// Wazuh puede dar timestamps tipo:\n//   \"2025-12-07T09:21:31.101+0000\"\n//   \"2025-12-07T09:27:40.408Z\"\n// SQL Server es más quisquilloso, así que:\n//\n// - Arreglamos \"+0000\" a \"+00:00\" cuando venga así.\n// - Pasamos siempre por new Date(...).toISOString() para obtener\n//   \"YYYY-MM-DDTHH:mm:ss.sssZ\", que SQL entiende bien.\n//\nconst normalizeTimestamp = (value) => {\n  if (!value) return new Date().toISOString();\n\n  // Si termina en +0000 o +hhmm -> convertir a +hh:mm\n  const fixed = String(value).replace(/([+-]\\d{2})(\\d{2})$/, \"$1:$2\");\n  const d = new Date(fixed);\n\n  if (Number.isNaN(d.getTime())) {\n    // Si por algún motivo no parsea, devolvemos ahora en ISO\n    return new Date().toISOString();\n  }\n  return d.toISOString();\n};\n\nconst eventTimestamp = normalizeTimestamp(\n  raw.timestamp ||\n  raw[\"@timestamp\"] ||\n  null\n);\n\n// 3.2 Datos de la regla Wazuh\nconst ruleId    = raw?.rule?.id    != null ? num(raw.rule.id, null)    : null;\nconst ruleLevel = raw?.rule?.level != null ? num(raw.rule.level, null) : null;\n\n// 3.3 Agente\nconst agentName = raw?.agent?.name || raw?.agent?.id || null;\n\n// 3.4 IPs y puertos de red\n//\n// En alerts.json la IP origen viene como:\n//   .data.srcip\n//\n// Priorizamos esa ruta y dejamos fallbacks por si en otros\n// tipos de alerta cambian los nombres de campos.\n//\nconst srcIp =\n  raw?.data?.srcip ??\n  raw?.data?.src_ip ??\n  raw?.data?.srcIp ??\n  null;\n\nconst dstIp =\n  raw?.data?.dstip ??\n  raw?.data?.dst_ip ??\n  raw?.data?.dstIp ??\n  null;\n\nconst srcPort = raw?.data?.srcport != null\n  ? num(raw.data.srcport, null)\n  : null;\n\nconst dstPort = raw?.data?.dstport != null\n  ? num(raw.data.dstport, null)\n  : null;\n\n// 3.5 IDs de campaña / escenario\nconst campaignId = num(raw?.campaign_id, 1);\nconst scenarioId = num(raw?.scenario_id, 101);\n\n// 3.6 ID único del evento en Wazuh (si existiera)\nconst wazuhAlertId = raw?.id ?? null;\n\n// 3.7 host_id (por ahora se resolverá en SQL vía join con otra tabla)\nconst hostId = null;\n\n// ---------------------------------------------------------------------\n// 4. OBJETO NORMALIZADO DE SALIDA\n// ---------------------------------------------------------------------\nconst normalized = {\n  // Campos para dbo.cec_events\n  campaign_id: campaignId,\n  scenario_id: scenarioId,\n  wazuh_alert_id: wazuhAlertId,\n  event_timestamp: eventTimestamp,\n  src_ip: srcIp,\n  dst_ip: dstIp,\n  src_port: srcPort,           // número o null (SQL lo tratará con CAST/NULLIF)\n  dst_port: dstPort,           // número o null\n  agent_name: agentName,\n  rule_id: ruleId,\n  rule_level: ruleLevel,\n  triage_severity: severity15,\n  triage_priority: priorityBand,\n  triage_risk: risk0to5,       // numérico 1–5 (encaja con FLOAT/NUMERIC)\n  host_id: hostId,\n\n  // Objeto de triage completo (para otros nodos)\n  triage: {\n    severity: severity15,\n    priority: priorityBand,\n    metrics: { volScore, fanoutScore, persistScore, impactScore, risk0to5 },\n    hitlRequired,\n    ces: { severity: severity15, confidence },\n  },\n\n  // Guardamos la alerta ORIGINAL de Wazuh (lo que usan los prompts)\n  raw,\n\n  // Si quieres conservar también el envoltorio del Webhook\n  // para depuración, puedes descomentar esta línea:\n  // envelope,\n};\n\nreturn [{ json: normalized }];\n"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        192,
+        -16
+      ],
+      "id": "4f5f2fc4-0a15-4b30-bcdc-21fdf45cecf4",
+      "name": "CEC Normalization wazuh event and Triage"
+    },
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "wazuh/alert",
+        "authentication": "basicAuth",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2.1,
+      "position": [
+        -176,
+        -16
+      ],
+      "id": "d050f58b-146c-49e8-9269-21d022f464a3",
+      "name": "Ingesta Wazuh Event",
+      "webhookId": "9c01e425-2776-4290-b7a1-f1cfeb6edffd",
+      "credentials": {
+        "httpBasicAuth": {
+          "id": "jX0XpGtneQWFyeKH",
+          "name": "Unnamed credential"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "// Set ts_ingest\nconst nowIso = new Date().toISOString();\n\nreturn $input.all().map(item => {\n  const j = item.json ?? {};\n  return {\n    json: {\n      ...j,\n      ts_ingest: j.ts_ingest || nowIso,      // no sobrescribe si ya existe\n      ts_ingest_ms: j.ts_ingest_ms || Date.now()\n    }\n  };\n});\n"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        16,
+        -16
+      ],
+      "id": "b1379cc5-4098-476b-af7a-7f074774b51b",
+      "name": "Set ts_ingest"
+    },
+    {
+      "parameters": {
+        "source": "parameter",
+        "workflowJson": "={{ $json }}\n\n\n\n",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1.3,
+      "position": [
+        768,
+        -16
+      ],
+      "id": "de58cf1d-a67e-49c7-9704-6bac25f9be92",
+      "name": "Call 'tool_monitor_event'",
+      "onError": "continueErrorOutput"
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "INSERT cec_events": {
+      "main": [
+        [
+          {
+            "node": "Attach event_id a normalized",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Attach event_id a normalized": {
+      "main": [
+        [
+          {
+            "node": "Call 'tool_monitor_event'",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "CEC Normalization wazuh event and Triage": {
+      "main": [
+        [
+          {
+            "node": "INSERT cec_events",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Ingesta Wazuh Event": {
+      "main": [
+        [
+          {
+            "node": "Set ts_ingest",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Set ts_ingest": {
+      "main": [
+        [
+          {
+            "node": "CEC Normalization wazuh event and Triage",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": true,
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "versionId": "6f471f36-cedb-4b02-b66c-9690ba7c84cf",
+  "meta": {
+    "instanceId": "5f4321b383184a4332b5d1e5cb6e70ea61441780fd28eb1fe8c95676a3e6f306"
+  },
+  "id": "0VYO9NlovMw7lguB",
+  "tags": []
+}

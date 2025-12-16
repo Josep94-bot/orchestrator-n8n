@@ -1,0 +1,517 @@
+{
+  "name": "tool_orchestrator_mcp",
+  "nodes": [
+    {
+      "parameters": {
+        "chatId": "6340620540",
+        "text": "={{ $json.output }}",
+        "additionalFields": {}
+      },
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [
+        704,
+        208
+      ],
+      "id": "c7e0a784-a749-426c-b322-822c82a50dc7",
+      "name": "Send a text message",
+      "webhookId": "8aea1a8a-710d-4453-b928-069a7c2086ce",
+      "credentials": {
+        "telegramApi": {
+          "id": "2SmrbhySGPb1qAlr",
+          "name": "Telegram account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "model": {
+          "__rl": true,
+          "mode": "list",
+          "value": "gpt-4.1-mini"
+        },
+        "builtInTools": {},
+        "options": {}
+      },
+      "type": "@n8n/n8n-nodes-langchain.lmChatOpenAi",
+      "typeVersion": 1.3,
+      "position": [
+        -16,
+        688
+      ],
+      "id": "48941d85-65a5-4a69-8606-6296802da510",
+      "name": "OpenAI Chat Model3",
+      "credentials": {
+        "openAiApi": {
+          "id": "yt3NGZbVrbZuYATf",
+          "name": "OpenAi account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "title": "Dashboard Orquestador N8N SocLab",
+        "additionalFields": {}
+      },
+      "type": "n8n-nodes-base.grafana",
+      "typeVersion": 1,
+      "position": [
+        1744,
+        0
+      ],
+      "id": "54394cc2-3795-495a-8946-59bbf887d8a9",
+      "name": "Create a dashboard",
+      "credentials": {
+        "grafanaApi": {
+          "id": "HjeG0i3gTm7dh84o",
+          "name": "Grafana account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "url": "https://jcontrerasp94.grafana.net/api/search",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "grafanaApi",
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            {
+              "name": "query",
+              "value": "Dashboard Orquestador N8N SocLab"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.3,
+      "position": [
+        1344,
+        0
+      ],
+      "id": "a29dbc6d-9a09-4009-b9fe-812cf6d40dd2",
+      "name": "Search Dashboard",
+      "credentials": {
+        "httpBasicAuth": {
+          "id": "eTOwH6uNsfGIx5M5",
+          "name": "Credencial Wazuh-HTTP Request"
+        },
+        "grafanaApi": {
+          "id": "HjeG0i3gTm7dh84o",
+          "name": "Grafana account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "c1edbaf2-7ee8-48cf-b3b4-cf8277bb0d3b",
+              "leftValue": "={{ Array.isArray($json) ? $json.length : 0 }}\n",
+              "rightValue": 0,
+              "operator": {
+                "type": "number",
+                "operation": "gt"
+              }
+            }
+          ],
+          "combinator": "or"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        1520,
+        0
+      ],
+      "id": "5e2e3515-d27b-4508-ba2b-04e24fa544b0",
+      "name": "If Dashboard exists"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Loop over input items and add a new field called 'myNewField' to the JSON of each one\nfor (const item of $input.all()) {\n  item.json.myNewField = 1;\n}\n\nreturn $input.all();"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        32,
+        208
+      ],
+      "id": "a23260d2-955f-428d-a842-5b48058f239f",
+      "name": "tool_input_unwrap"
+    },
+    {
+      "parameters": {
+        "jsCode": "return [\n  {\n    json: {\n      final_output: $json.output ?? $json,\n      orchestration: $json.orchestration ?? null,\n      kpi_updates: $json.kpi_updates ?? null\n    }\n  }\n];\n"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1024,
+        224
+      ],
+      "id": "00b93eb8-8c9b-4b77-9c5c-b9809e0a3a92",
+      "name": "Return_final_event"
+    },
+    {
+      "parameters": {
+        "promptType": "define",
+        "text": "You are the SOC Orchestration agent.\n\nINPUT:\nYou receive ONE JSON object that may include:\n- event identifiers: event_id, event_timestamp, rule_id, rule_level, agent_name, src_ip, dst_ip\n- analysis outputs (optional): analysis.classification, analysis.ai_risk_level_1_15, analysis.ai_priority_band\n- response planning: response_plan.playbook, response_plan.selected_option, response_plan.requires_approval\n- HITL decision (optional): decision = \"Aprobar\"|\"Denegar\"\n- timestamps (generated by code nodes, authoritative):\n  ts_ingest, ts_analysis_start, ts_analysis_end, tta_sec,\n  ts_hitl_start, ts_hitl_end, hitl_wait_sec,\n  ts_response_start, ts_response_end, mttr_sec\n- action execution evidence (optional):\n  - For HTTP: statusCode / status / response body\n  - For SSH: exitCode / stdout / stderr\n\nTASK:\nReturn ONLY valid JSON (no markdown) with EXACTLY:\n{\n  \"orchestration\": {\n    \"incident_state\": \"New|Investigating|Mitigating|Closed|FalsePositive\",\n    \"next_step\": \"ANALYZE|RESPOND|CLOSE\",\n    \"timestamps\": { \"ts_response_end\": \"\" }\n  },\n  \"kpi_updates\": {\n    \"tta_sec\": 0,\n    \"mttr_sec\": 0,\n    \"outcome\": \"success|failed\",\n    \"notes\": \"\"\n  }\n}\n\nHARD RULES:\n- Do NOT invent timestamps. If a timestamp field is missing in input, keep it empty and explain in notes.\n- Do NOT claim an action succeeded unless there is explicit evidence in the input (HTTP 2xx or SSH exitCode==0).\n- Use input tta_sec and mttr_sec as the primary KPI values (do not recompute unless missing).\n- notes must be short Spanish: explain decision/playbook + whether action evidence exists + any missing data.\n\nDECISION LOGIC:\n- If decision == \"Denegar\": incident_state=\"Closed\", next_step=\"CLOSE\".\n- Else if response_plan.playbook == \"PB_BLOCK_IP\": incident_state=\"Mitigating\", next_step=\"RESPOND\".\n- Else if response_plan.playbook == \"PB_COLLECT_ARTIFACTS\": incident_state=\"Investigating\", next_step=\"ANALYZE\".\n- Else if analysis.classification == \"benign\" AND response_plan.playbook == \"PB_NOTIFY_ONLY\": incident_state=\"FalsePositive\", next_step=\"CLOSE\".\n- Else: incident_state=\"Investigating\", next_step=\"ANALYZE\".\n\nOUTCOME:\n- \"success\" only if evidence of execution success exists OR playbook is notify-only / denied by HITL.\n- otherwise \"failed\".\n\nSet orchestration.timestamps.ts_response_end = ts_response_end if present, else \"\".\nSet kpi_updates.tta_sec = input tta_sec (or 0).\nSet kpi_updates.mttr_sec = input mttr_sec (or 0).\n\nReturn JSON only.\n\n}\n",
+        "options": {}
+      },
+      "type": "@n8n/n8n-nodes-langchain.agent",
+      "typeVersion": 3,
+      "position": [
+        288,
+        224
+      ],
+      "id": "8855b8c3-f5d0-4b35-a550-553535d51b27",
+      "name": "Orquestador"
+    },
+    {
+      "parameters": {
+        "workflowId": {
+          "__rl": true,
+          "value": "0VYO9NlovMw7lguB",
+          "mode": "list",
+          "cachedResultUrl": "/workflow/0VYO9NlovMw7lguB",
+          "cachedResultName": "Monitoring"
+        },
+        "workflowInputs": {
+          "mappingMode": "defineBelow",
+          "value": {},
+          "matchingColumns": [],
+          "schema": [],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": false
+        }
+      },
+      "type": "@n8n/n8n-nodes-langchain.toolWorkflow",
+      "typeVersion": 2.2,
+      "position": [
+        464,
+        640
+      ],
+      "id": "49655bbd-86e6-4c63-9ca2-5eaebcf65ea1",
+      "name": "Monitoring"
+    },
+    {
+      "parameters": {
+        "workflowId": {
+          "__rl": true,
+          "value": "B6ml0xnoGo49CwEq",
+          "mode": "list",
+          "cachedResultUrl": "/workflow/B6ml0xnoGo49CwEq",
+          "cachedResultName": "tool_plan_response"
+        },
+        "workflowInputs": {
+          "mappingMode": "defineBelow",
+          "value": {},
+          "matchingColumns": [],
+          "schema": [],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": false
+        }
+      },
+      "type": "@n8n/n8n-nodes-langchain.toolWorkflow",
+      "typeVersion": 2.2,
+      "position": [
+        640,
+        640
+      ],
+      "id": "606f1208-277b-45b4-a406-017d72f1e36b",
+      "name": "ResponsePlan"
+    },
+    {
+      "parameters": {
+        "workflowId": {
+          "__rl": true,
+          "value": "Tc0QeA1pYB7EB8Ii",
+          "mode": "list",
+          "cachedResultUrl": "/workflow/Tc0QeA1pYB7EB8Ii",
+          "cachedResultName": "ResponseExecute"
+        },
+        "workflowInputs": {
+          "mappingMode": "defineBelow",
+          "value": {},
+          "matchingColumns": [],
+          "schema": [],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": false
+        }
+      },
+      "type": "@n8n/n8n-nodes-langchain.toolWorkflow",
+      "typeVersion": 2.2,
+      "position": [
+        304,
+        624
+      ],
+      "id": "7aa15990-a4ed-460b-bba8-f30ca11c7172",
+      "name": "Execute"
+    },
+    {
+      "parameters": {
+        "workflowId": {
+          "__rl": true,
+          "value": "RbwZ2h03ngEjTubg",
+          "mode": "list",
+          "cachedResultUrl": "/workflow/RbwZ2h03ngEjTubg",
+          "cachedResultName": "Analysis"
+        },
+        "workflowInputs": {
+          "mappingMode": "defineBelow",
+          "value": {},
+          "matchingColumns": [],
+          "schema": [],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": false
+        }
+      },
+      "type": "@n8n/n8n-nodes-langchain.toolWorkflow",
+      "typeVersion": 2.2,
+      "position": [
+        800,
+        624
+      ],
+      "id": "cb7223c0-820d-423f-86d7-e935ae66994c",
+      "name": "Analysis"
+    },
+    {
+      "parameters": {
+        "public": true,
+        "options": {}
+      },
+      "type": "@n8n/n8n-nodes-langchain.chatTrigger",
+      "typeVersion": 1.4,
+      "position": [
+        -160,
+        208
+      ],
+      "id": "51e1266b-d922-4a08-856b-5dd1b6e7581e",
+      "name": "When chat message received",
+      "webhookId": "428aa039-743b-43cb-9f79-eba015382554"
+    },
+    {
+      "parameters": {
+        "message": "={{ $json.output }}",
+        "waitUserReply": false,
+        "options": {
+          "memoryConnection": true
+        }
+      },
+      "type": "@n8n/n8n-nodes-langchain.chat",
+      "typeVersion": 1,
+      "position": [
+        752,
+        -64
+      ],
+      "id": "fc037350-cf2e-433f-82a2-ec94a1533d22",
+      "name": "Respond to Chat",
+      "alwaysOutputData": true,
+      "notesInFlow": true,
+      "onError": "continueErrorOutput"
+    },
+    {
+      "parameters": {
+        "workflowId": {
+          "__rl": true,
+          "value": "bAd3crCZlnRYDxHY",
+          "mode": "list",
+          "cachedResultUrl": "/workflow/bAd3crCZlnRYDxHY",
+          "cachedResultName": "tool_execute_action"
+        },
+        "workflowInputs": {
+          "mappingMode": "defineBelow",
+          "value": {},
+          "matchingColumns": [],
+          "schema": [],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": false
+        }
+      },
+      "type": "@n8n/n8n-nodes-langchain.toolWorkflow",
+      "typeVersion": 2.2,
+      "position": [
+        160,
+        592
+      ],
+      "id": "49ae8bdf-ac49-4777-aa74-8896cdec46d2",
+      "name": "Call 'tool_execute_action'"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Recuperamos el JSON de entrada\nconst orchestration = $json.orchestration;\nconst kpiUpdates = $json.kpi_updates;\n\n// Definir variables que guardarán las partes del mensaje\nlet message = \"Resumen de Orquestación de Incidente:\\n\";\n\n// Incidente\nmessage += `Estado del incidente: ${orchestration.incident_state}\\n`;\nmessage += `Próximo paso: ${orchestration.next_step}\\n`;\n\n// Tiempos\nmessage += `Timestamp de respuesta: ${orchestration.timestamps.ts_response_end || 'No disponible'}\\n`;\nmessage += `Tiempo Total de Análisis (TTA): ${kpiUpdates.tta_sec || 0} segundos\\n`;\nmessage += `Tiempo Medio de Respuesta (MTTR): ${kpiUpdates.mttr_sec || 0} segundos\\n`;\n\n// Resultado\nmessage += `Resultado de la acción: ${kpiUpdates.outcome}\\n`;\nmessage += `Notas: ${kpiUpdates.notes || 'No hay notas disponibles.'}\\n`;\n\n// Lógica de decisión adicional\nif (orchestration.incident_state === \"Closed\" && orchestration.next_step === \"CLOSE\") {\n    message += \"Decisión: El incidente ha sido cerrado.\\n\";\n} else if (orchestration.incident_state === \"Mitigating\" && orchestration.next_step === \"RESPOND\") {\n    message += \"Decisión: El incidente está siendo mitigado.\\n\";\n} else if (orchestration.incident_state === \"Investigating\" && orchestration.next_step === \"ANALYZE\") {\n    message += \"Decisión: El incidente está siendo investigado.\\n\";\n} else if (orchestration.incident_state === \"FalsePositive\" && orchestration.next_step === \"CLOSE\") {\n    message += \"Decisión: El incidente ha sido marcado como falso positivo.\\n\";\n} else {\n    message += \"Decisión: El incidente está en investigación.\\n\";\n}\n\n// Retornar el mensaje en formato texto\nreturn [\n  {\n    json: {\n      message: message\n    }\n  }\n];\n\n"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1584,
+        240
+      ],
+      "id": "80bb7c75-002e-446f-a40f-bd336ab50db8",
+      "name": "salida chat",
+      "alwaysOutputData": true,
+      "onError": "continueErrorOutput"
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "OpenAI Chat Model3": {
+      "ai_languageModel": [
+        [
+          {
+            "node": "Orquestador",
+            "type": "ai_languageModel",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Search Dashboard": {
+      "main": [
+        [
+          {
+            "node": "If Dashboard exists",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "If Dashboard exists": {
+      "main": [
+        [],
+        [
+          {
+            "node": "Create a dashboard",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "tool_input_unwrap": {
+      "main": [
+        [
+          {
+            "node": "Orquestador",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Create a dashboard": {
+      "main": [
+        []
+      ]
+    },
+    "Return_final_event": {
+      "main": [
+        []
+      ]
+    },
+    "Orquestador": {
+      "main": [
+        [
+          {
+            "node": "Send a text message",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "ResponsePlan": {
+      "ai_tool": [
+        [
+          {
+            "node": "Orquestador",
+            "type": "ai_tool",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Monitoring": {
+      "ai_tool": [
+        [
+          {
+            "node": "Orquestador",
+            "type": "ai_tool",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Execute": {
+      "ai_tool": [
+        [
+          {
+            "node": "Orquestador",
+            "type": "ai_tool",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Analysis": {
+      "ai_tool": [
+        [
+          {
+            "node": "Orquestador",
+            "type": "ai_tool",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "When chat message received": {
+      "main": [
+        [
+          {
+            "node": "tool_input_unwrap",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Respond to Chat": {
+      "main": [
+        []
+      ]
+    },
+    "Call 'tool_execute_action'": {
+      "ai_tool": [
+        [
+          {
+            "node": "Orquestador",
+            "type": "ai_tool",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "versionId": "4fae7825-b76a-4639-8fa8-e8210336e71d",
+  "meta": {
+    "templateCredsSetupCompleted": true,
+    "instanceId": "5f4321b383184a4332b5d1e5cb6e70ea61441780fd28eb1fe8c95676a3e6f306"
+  },
+  "id": "gpCZgvKagyZnksc2",
+  "tags": []
+}

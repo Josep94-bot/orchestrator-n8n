@@ -1,0 +1,778 @@
+{
+  "name": "ResponseExecute",
+  "nodes": [
+    {
+      "parameters": {
+        "rules": {
+          "values": [
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict",
+                  "version": 2
+                },
+                "conditions": [
+                  {
+                    "leftValue": "={{ $json.decision }}",
+                    "rightValue": "Aprobar",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    },
+                    "id": "e90cb0a3-5d70-4c21-9bd8-63725c29c48d"
+                  }
+                ],
+                "combinator": "and"
+              }
+            },
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict",
+                  "version": 2
+                },
+                "conditions": [
+                  {
+                    "id": "00fb8b90-1cf7-4d04-9b96-56584242bcdf",
+                    "leftValue": "={{ $json.decision }}",
+                    "rightValue": "Denegar",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals",
+                      "name": "filter.operator.equals"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              }
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.switch",
+      "typeVersion": 3.3,
+      "position": [
+        -720,
+        768
+      ],
+      "id": "ed5c3021-7485-4dd8-bf86-3eb939eecce8",
+      "name": "Switch Post Respuesta",
+      "alwaysOutputData": false
+    },
+    {
+      "parameters": {
+        "method": "PUT",
+        "url": "https://192.168.100.103:55000/active-response",
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            {
+              "name": "agents_list",
+              "value": "012"
+            },
+            {
+              "name": "wait_for_complete",
+              "value": "true"
+            }
+          ]
+        },
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "=Bearer {{$node[\"Wazuh/Get Token\"].json.data.token}}\n"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "=={\n  \"command\": \"firewall-drop\",\n  \"arguments\": {\n    \"extra_args\": [],\n    \"alert\": {\n      \"data\": {\n        \"srcip\": \"{{ $json.src_ip || $json.raw?.data?.srcip || '' }}\"\n      }\n    }\n  }\n}\n\n",
+        "options": {
+          "allowUnauthorizedCerts": true
+        }
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.3,
+      "position": [
+        176,
+        192
+      ],
+      "id": "24bb83f0-3995-4284-aca2-d4d6c32a09a1",
+      "name": "Wazuh/firewall"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://192.168.100.103:55000/security/user/authenticate",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpBasicAuth",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "{\n  \"username\": \"wazuh-wui\",\n  \"password\": \"wazuh-wui\"\n}",
+        "options": {
+          "allowUnauthorizedCerts": true
+        }
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.3,
+      "position": [
+        -16,
+        192
+      ],
+      "id": "efadd036-5fea-4e1d-8c46-22f2a8faa818",
+      "name": "Wazuh/Get Token",
+      "credentials": {
+        "httpBasicAuth": {
+          "id": "jX0XpGtneQWFyeKH",
+          "name": "Unnamed credential"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "rules": {
+          "values": [
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict",
+                  "version": 2
+                },
+                "conditions": [
+                  {
+                    "leftValue": "={{ $json.response_plan.playbook }}",
+                    "rightValue": "PB_BLOCK_IP",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    },
+                    "id": "f6336a4d-257b-43c1-97ad-ceec87f8d3d2"
+                  }
+                ],
+                "combinator": "and"
+              }
+            },
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict",
+                  "version": 2
+                },
+                "conditions": [
+                  {
+                    "id": "58dc63c9-be32-45b4-a8ee-3b25e0ea735e",
+                    "leftValue": "={{ $json.response_plan.playbook }}",
+                    "rightValue": "PB_NOTIFY_ONLY",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals",
+                      "name": "filter.operator.equals"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              }
+            },
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict",
+                  "version": 2
+                },
+                "conditions": [
+                  {
+                    "id": "0fe1ddec-e5c4-4013-8a92-7ef40eaa9567",
+                    "leftValue": "={{ $json.response_plan.playbook }}",
+                    "rightValue": "PB_COLLECT_ARTIFACTS",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals",
+                      "name": "filter.operator.equals"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              }
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.switch",
+      "typeVersion": 3.2,
+      "position": [
+        -368,
+        512
+      ],
+      "id": "2d9d7ea7-b5a2-45e1-84cc-39ea8182792e",
+      "name": "Switch Action Router"
+    },
+    {
+      "parameters": {
+        "chatId": "6340620540",
+        "text": "=HITL: {{$json.hitl_timeout ? \"Sin respuesta (timeout)\" : \"Denegado por analista\"}}.\nNo se ejecuta mitigación automática.\n\nevent_id: {{$json.event_id || \"NA\"}}\nrule: {{$json.rule_id || \"NA\"}} (lvl {{$json.rule_level || \"NA\"}})\nsrc_ip: {{$json.src_ip || $json.raw?.data?.srcip || \"NA\"}}\ndecision: {{$json.decision || \"NA\"}}\n",
+        "additionalFields": {}
+      },
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [
+        80,
+        816
+      ],
+      "id": "0ebf5011-d766-4e11-b25c-2a739984af67",
+      "name": "Noficación HITL",
+      "webhookId": "69d1fb58-ba7c-43ac-95f7-975d26289a5b",
+      "credentials": {
+        "telegramApi": {
+          "id": "2SmrbhySGPb1qAlr",
+          "name": "Telegram account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "// ts_hitl_start\nconst nowIso = new Date().toISOString();\n\nreturn $input.all().map(item => {\n  const j = item.json ?? {};\n  return {\n    json: {\n      ...j,\n      ts_hitl_start: j.ts_hitl_start || nowIso\n    }\n  };\n});\n"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -1328,
+        672
+      ],
+      "id": "99fa1140-720f-401d-8ffa-9896c8f98fe3",
+      "name": "ts_hitl_start"
+    },
+    {
+      "parameters": {
+        "jsCode": "// ts_response_start\nconst nowIso = new Date().toISOString();\n\nreturn $input.all().map(item => {\n  const j = item.json ?? {};\n  return {\n    json: {\n      ...j,\n      ts_response_start: j.ts_response_start || nowIso\n    }\n  };\n});\n"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -544,
+        656
+      ],
+      "id": "e24bcf42-e4aa-4021-8452-bf4bf92c84c3",
+      "name": "ts_response_start"
+    },
+    {
+      "parameters": {
+        "jsCode": "// ts_response_end+mttr\nconst nowIso = new Date().toISOString();\n\nconst parseMs = (s) => {\n  const t = Date.parse(s);\n  return Number.isFinite(t) ? t : null;\n};\n\nreturn $input.all().map(item => {\n  const j = item.json ?? {};\n\n  const tsStart =\n    j.ts_response_start ||\n    j.ts_hitl_end ||\n    j.ts_analysis_end ||\n    j.ts_ingest ||\n    j.event_timestamp ||\n    \"\";\n\n  const startMs = parseMs(tsStart);\n  const endMs = parseMs(nowIso);\n  const mttrSec = (startMs && endMs) ? Math.round((endMs - startMs) / 1000) : 0;\n\n  return {\n    json: {\n      ...j,\n      ts_response_end: nowIso,\n      mttr_sec: j.mttr_sec ?? mttrSec\n    }\n  };\n});\n"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        704,
+        496
+      ],
+      "id": "6d5f160f-0915-4407-8738-d038d5a317f4",
+      "name": "ts_response_end+mttr"
+    },
+    {
+      "parameters": {
+        "jsCode": "// ts_hitl_end\nconst nowIso = new Date().toISOString();\n\nconst parseMs = (s) => {\n  const t = Date.parse(s);\n  return Number.isFinite(t) ? t : null;\n};\n\nreturn $input.all().map(item => {\n  const j = item.json ?? {};\n\n  // lee decision desde Telegram (data.decision) o top-level (si ya viene seteada)\n  let decision = (j?.data?.decision ?? j.decision ?? \"\").toString().trim();\n\n  // normaliza: si no es una opción válida (timeout / vacío / raro) => Denegar (seguro)\n  const valid = (decision === \"Aprobar\" || decision === \"Denegar\");\n  const hitl_timeout = !valid;\n\n  if (!valid) decision = \"Denegar\";\n\n  const tsStart = j.ts_hitl_start || $node[\"ts_hitl_start\"]?.json?.ts_hitl_start || \"\";\n\n  const startMs = parseMs(tsStart);\n  const endMs = parseMs(nowIso);\n  const hitlWait = (startMs && endMs) ? Math.round((endMs - startMs) / 1000) : 0;\n\n  return {\n    json: {\n      ...j,\n      decision,\n      hitl_timeout,          // <--- útil para auditoría/debug (opcional)\n      ts_hitl_start: tsStart,\n      ts_hitl_end: nowIso,\n      hitl_wait_sec: j.hitl_wait_sec ?? hitlWait\n    }\n  };\n});\n"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -864,
+        688
+      ],
+      "id": "f2a1aaf1-8248-46a3-8cd0-2f62da6b05a2",
+      "name": "ts_hitl_end"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 3
+          },
+          "conditions": [
+            {
+              "id": "ce405f4c-ed76-4ee9-a53f-dbe44d822b2e",
+              "leftValue": "={{ $json.response_plan.requires_approval }}",
+              "rightValue": "true",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {
+          "ignoreCase": false
+        }
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        -1328,
+        432
+      ],
+      "id": "0ba0902d-41de-4fd9-9df8-faa66fd44e2a",
+      "name": "HITL Decisión"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Return Final event\n// Devuelve 1 solo item con el evento final (con response_plan + tiempos + decisión + outcome)\n\nconst j = $json ?? {};\n\nconst playbook = j.response_plan?.playbook ?? \"\";\nconst decision = (j.decision ?? \"\").toString().trim();\nconst srcIp = j.src_ip || j.raw?.data?.srcip || \"\";\n\nlet response_outcome = \"unknown\";\n\nif (decision === \"Denegar\") {\n  response_outcome = \"hitl_denied\";\n} else if (playbook === \"PB_BLOCK_IP\") {\n  response_outcome = srcIp ? \"blocked\" : \"block_skipped_no_src_ip\";\n} else if (playbook === \"PB_NOTIFY_ONLY\") {\n  response_outcome = \"notified\";\n} else if (playbook === \"PB_COLLECT_ARTIFACTS\") {\n  response_outcome = \"artifact_requested\";\n}\n\nreturn [{\n  json: {\n    ...j,\n    response_outcome,\n    response_executed: response_outcome !== \"unknown\",\n  }\n}];\n"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        896,
+        496
+      ],
+      "id": "27cf0b43-3467-4050-9a4f-58cbaacdf0f5",
+      "name": "Return Final event"
+    },
+    {
+      "parameters": {
+        "inputSource": "passthrough"
+      },
+      "type": "n8n-nodes-base.executeWorkflowTrigger",
+      "typeVersion": 1.1,
+      "position": [
+        -1520,
+        432
+      ],
+      "id": "db6f4d5f-6a3f-4816-942d-1464dc1e6133",
+      "name": "When Executed by Another Workflow"
+    },
+    {
+      "parameters": {
+        "operation": "sendAndWait",
+        "chatId": "6340620540",
+        "message": "=={{ (() => {\n  const j = $json ?? {};\n  const pick = (...v) => v.find(x => x !== undefined && x !== null && `${x}`.trim() !== '') ?? 'No disponible';\n\n  const src = pick(j.src_ip, j.raw?.data?.srcip);\n  const dst = pick(j.dst_ip, j.raw?.data?.dstip);\n\n  const playbook = pick(j.response_plan?.playbook);\n  const selected = pick(j.response_plan?.selected_option);\n\n  return `Nueva alerta recibida\n\nTimestamp: ${pick(j.event_timestamp)}\nWazuh Rule ID: ${pick(j.rule_id)}\nRule Level: ${pick(j.rule_level)}\n\nSeveridad IA (0–15): ${pick(j.triage_severity)}\nPrioridad IA: ${pick(j.triage_priority)}\n\nHost: ${pick(j.agent_name)}\nIP origen: ${src}\nIP destino: ${dst}\n\nPlan sugerido: ${playbook} (opción ${selected})\n\n¿Aprobar ejecución de mitigación?`;\n})() }}\n\n",
+        "responseType": "customForm",
+        "formFields": {
+          "values": [
+            {
+              "fieldLabel": "decision",
+              "fieldType": "radio",
+              "fieldOptions": {
+                "values": [
+                  {
+                    "option": "Aprobar"
+                  },
+                  {
+                    "option": "Denegar"
+                  }
+                ]
+              }
+            }
+          ]
+        },
+        "options": {
+          "limitWaitTime": {
+            "values": {
+              "resumeAmount": 45,
+              "resumeUnit": "minutes"
+            }
+          }
+        }
+      },
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [
+        -1072,
+        672
+      ],
+      "id": "ba9a38fc-25eb-486c-be18-959921a85e12",
+      "name": "Message HITL",
+      "webhookId": "71fbd29b-35da-4988-b0b8-48f627b03165",
+      "alwaysOutputData": true,
+      "credentials": {
+        "telegramApi": {
+          "id": "2SmrbhySGPb1qAlr",
+          "name": "Telegram account"
+        }
+      },
+      "onError": "continueErrorOutput"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 3
+          },
+          "conditions": [
+            {
+              "id": "381b3884-edff-4bbb-a065-1676c438fb30",
+              "leftValue": "={{ !!($json.src_ip || $json.raw?.data?.srcip) }}",
+              "rightValue": "",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        -176,
+        384
+      ],
+      "id": "5fa54f5b-efb4-43ef-b0c2-21f86de6a927",
+      "name": "src_ip exists"
+    },
+    {
+      "parameters": {
+        "chatId": "6340620540",
+        "text": "=={{(() => {  const j = $json ?? {};  const pick = (...v) => v.find(x => x !== undefined && x !== null && String(x).trim() !== \"\");  const srcIp = pick(j.src_ip, j.raw?.data?.srcip, \"NA\");  const dstIp = pick(j.dst_ip, j.raw?.data?.dstip, \"NA\");  const host  = pick(j.agent_name, j.raw?.agent?.name, \"NA\");  const ruleId = pick(j.rule_id, \"NA\");  const ruleLvl = pick(j.rule_level, \"NA\");  const sev = pick(j.triage_severity, j.analysis?.key_facts?.triage_severity, \"NA\");  const pri = pick(j.triage_priority, j.analysis?.key_facts?.triage_priority, \"NA\");  const playbook = pick(j.response_plan?.playbook, \"PB_NOTIFY_ONLY\");  const why = pick(j.response_plan?.message_for_hitl, j.analysis?.summary_es, \"Sin detalle\");  return [    \"🟦 ACCIÓN: NOTIFICAR (sin contención)\",    `playbook: ${playbook}`,    `event_id: ${pick(j.event_id, \"NA\")} | ts: ${pick(j.event_timestamp, \"NA\")}`,    `rule: ${ruleId} (lvl ${ruleLvl})`,    `triage: sev=${sev} pri=${pri}`,    `host: ${host}`,    `net: ${srcIp} → ${dstIp}`,    `nota: ${why}`  ].join(\"\\n\");})()}}",
+        "additionalFields": {
+          "disable_web_page_preview": true
+        }
+      },
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [
+        80,
+        464
+      ],
+      "id": "4af0952f-14f2-4a7c-98c1-280cb33fc6e6",
+      "name": "Notify",
+      "webhookId": "5a1f28ff-6663-4850-a67c-649def6cb1a9",
+      "credentials": {
+        "telegramApi": {
+          "id": "2SmrbhySGPb1qAlr",
+          "name": "Telegram account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "chatId": "6340620540",
+        "text": "=={{(() => {  const j = $json ?? {};  const pick = (...v) => v.find(x => x !== undefined && x !== null && String(x).trim() !== \"\");  const srcIp = pick(j.src_ip, j.raw?.data?.srcip, \"NA\");  const dstIp = pick(j.dst_ip, j.raw?.data?.dstip, \"NA\");  const host  = pick(j.agent_name, j.raw?.agent?.name, \"NA\");  const ruleId = pick(j.rule_id, \"NA\");  const ruleLvl = pick(j.rule_level, \"NA\");  const sev = pick(j.triage_severity, j.analysis?.key_facts?.triage_severity, \"NA\");  const pri = pick(j.triage_priority, j.analysis?.key_facts?.triage_priority, \"NA\");  const why = pick(j.response_plan?.options?.B?.why, j.response_plan?.message_for_hitl, j.analysis?.summary_es, \"Sin detalle\");  return [    \"🟨 ACCIÓN: RECOLECTAR ARTEFACTOS (investigación)\",    `event_id: ${pick(j.event_id, \"NA\")} | ts: ${pick(j.event_timestamp, \"NA\")}`,    `rule: ${ruleId} (lvl ${ruleLvl})`,    `triage: sev=${sev} pri=${pri}`,    `host: ${host}`,    `net: ${srcIp} → ${dstIp}`,    \"\",    \"📌 Solicitud de evidencias:\",    \"- /var/log/auth.log (o journalctl -u ssh) (últimos 15-30 min)\",    \"- Logs de Wazuh relacionados al evento (manager/agent si aplica)\",    \"- Si es red: pcap corto (1-3 min) o netflow del intervalo\",    \"- Lista de intentos/usuarios (si aplica)\",    \"\",    `nota: ${why}`  ].join(\"\\n\");})()}}",
+        "additionalFields": {}
+      },
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [
+        80,
+        624
+      ],
+      "id": "ce256119-341f-491a-b44c-da709fe20d3e",
+      "name": "Artifacts",
+      "webhookId": "5a1f28ff-6663-4850-a67c-649def6cb1a9",
+      "credentials": {
+        "telegramApi": {
+          "id": "2SmrbhySGPb1qAlr",
+          "name": "Telegram account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "chatId": "6340620540",
+        "text": "=⚠️ Containment NO ejecutado: src_ip no disponible  event_id: {{$json.event_id || \"NA\"}} ts: {{$json.event_timestamp || \"NA\"}} rule: {{$json.rule_id || \"NA\"}} (lvl {{$json.rule_level || \"NA\"}}) host: {{$json.agent_name || $json.raw?.agent?.name || \"NA\"}}  playbook: {{$json.response_plan?.playbook || \"NA\"}} motivo: no hay src_ip en el evento → solo notificación / seguimiento.",
+        "additionalFields": {
+          "disable_web_page_preview": true
+        }
+      },
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [
+        384,
+        368
+      ],
+      "id": "7ff8a75c-1868-4c45-bc88-2db7b2468271",
+      "name": "Message No_src_ip",
+      "webhookId": "157ce4aa-40c6-46e4-a267-578e794e7d30",
+      "credentials": {
+        "telegramApi": {
+          "id": "2SmrbhySGPb1qAlr",
+          "name": "Telegram account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "chatId": "6340620540",
+        "text": "=={{ \n(() => {\n  const j = $json ?? {};\n  const pick = (...v) => v.find(x => x !== undefined && x !== null && String(x).trim() !== \"\");\n  const srcIp = pick(j.src_ip, j.raw?.data?.srcip, \"No disponible\");\n  const host  = pick(j.agent_name, j.raw?.agent?.name, \"No disponible\");\n  const ruleId = pick(j.rule_id, \"NA\");\n  const ruleLevel = pick(j.rule_level, \"NA\");\n  const sev = pick(j.triage_severity, \"NA\");\n  const pri = pick(j.triage_priority, \"NA\");\n  const pb = pick(j.response_plan?.playbook, \"PB_BLOCK_IP\");\n\n  // Resultado del HTTP a Wazuh (si está disponible en el contexto del workflow)\n  const wz = $node[\"Wazuh/firewall\"]?.json ?? {};\n  const wzMsg = pick(\n    wz?.data?.message,\n    wz?.message,\n    wz?.error,\n    wz?.detail,\n    JSON.stringify(wz).slice(0, 200)\n  );\n\n  return [\n    \"✅ Mitigación ejecutada\",\n    `playbook: ${pb}`,\n    `src_ip: ${srcIp}`,\n    `host: ${host}`,\n    `rule: ${ruleId} (lvl ${ruleLevel})`,\n    `triage: sev=${sev} pri=${pri}`,\n    `wazuh_response: ${wzMsg || \"OK\"}`\n  ].join(\"\\n\");\n})()\n}}\n",
+        "additionalFields": {}
+      },
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [
+        384,
+        192
+      ],
+      "id": "1fcd944a-8e39-4d7b-a771-9f7adac3e78f",
+      "name": "Notify_Block_ip",
+      "webhookId": "5a1f28ff-6663-4850-a67c-649def6cb1a9",
+      "credentials": {
+        "telegramApi": {
+          "id": "2SmrbhySGPb1qAlr",
+          "name": "Telegram account"
+        }
+      },
+      "onError": "continueErrorOutput"
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "Switch Post Respuesta": {
+      "main": [
+        [
+          {
+            "node": "ts_response_start",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Noficación HITL",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Wazuh/firewall": {
+      "main": [
+        [
+          {
+            "node": "Notify_Block_ip",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Wazuh/Get Token": {
+      "main": [
+        [
+          {
+            "node": "Wazuh/firewall",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Switch Action Router": {
+      "main": [
+        [
+          {
+            "node": "src_ip exists",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Notify",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Artifacts",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Noficación HITL": {
+      "main": [
+        [
+          {
+            "node": "ts_response_end+mttr",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "ts_hitl_start": {
+      "main": [
+        [
+          {
+            "node": "Message HITL",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "ts_response_start": {
+      "main": [
+        [
+          {
+            "node": "Switch Action Router",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "ts_response_end+mttr": {
+      "main": [
+        [
+          {
+            "node": "Return Final event",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "ts_hitl_end": {
+      "main": [
+        [
+          {
+            "node": "Switch Post Respuesta",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "HITL Decisión": {
+      "main": [
+        [
+          {
+            "node": "ts_hitl_start",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "ts_response_start",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "When Executed by Another Workflow": {
+      "main": [
+        [
+          {
+            "node": "HITL Decisión",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Message HITL": {
+      "main": [
+        [
+          {
+            "node": "ts_hitl_end",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        []
+      ]
+    },
+    "src_ip exists": {
+      "main": [
+        [
+          {
+            "node": "Wazuh/Get Token",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Message No_src_ip",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Notify": {
+      "main": [
+        [
+          {
+            "node": "ts_response_end+mttr",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Artifacts": {
+      "main": [
+        [
+          {
+            "node": "ts_response_end+mttr",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Message No_src_ip": {
+      "main": [
+        [
+          {
+            "node": "ts_response_end+mttr",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Notify_Block_ip": {
+      "main": [
+        [
+          {
+            "node": "ts_response_end+mttr",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "versionId": "d4ae1fa3-ede1-4c55-bfc8-648c47e400ea",
+  "meta": {
+    "templateCredsSetupCompleted": true,
+    "instanceId": "5f4321b383184a4332b5d1e5cb6e70ea61441780fd28eb1fe8c95676a3e6f306"
+  },
+  "id": "Tc0QeA1pYB7EB8Ii",
+  "tags": []
+}
