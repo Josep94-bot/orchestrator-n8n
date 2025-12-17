@@ -1,14 +1,14 @@
 # orchestrator-n8n
 ## Orquestador de Agentes de IA para Gestión de Incidentes (SOC)
 
-Prototipo de orquestación **SOAR** basado en **n8n** + utilidades **JS/TS** para **ingesta, normalización (CEC), triage (LLM + HITL) y respuesta** ante incidentes de ciberseguridad (mapeo **MITRE ATT&CK**, playbooks y métricas como **MTTD/MTTR**).
+Prototipo de orquestación basado en **n8n** + utilidades **JS** para **ingesta, normalización (CEC), triage (LLM + HITL) y respuesta** ante incidentes de ciberseguridad (mapeo **MITRE ATT&CK**, playbooks y métricas como **MTTD/MTTR**).
 
-> ⚠️ Proyecto orientado a laboratorio / investigación. No ejecutar playbooks en producción sin controles (aprobación, pruebas y hardening).
+> ⚠️ Proyecto orientado a desarrollo de prototipo de Laboratorio SOC. 
 
 ---
 
 ## 🧪 Laboratorio SOC (topología)
-El prototipo se valida sobre un laboratorio con **Wazuh Manager**, **Active Directory**, endpoints Win11/Ubuntu y un IDS.
+El prototipo se valida sobre un laboratorio conformado por un Cisco SG300-28 Small Bussiness con **Wazuh Manager**, **Active Directory**, **n8n**, endpoints Win11/Ubuntu y un IDS Suricata.
 
 ![Topología SOC](./Orchestrator/docs/Topología%20Laboratorio%20SOC.png)
 
@@ -18,7 +18,7 @@ El prototipo se valida sobre un laboratorio con **Wazuh Manager**, **Active Dire
 - **Ingesta y normalización** de eventos a un **CEC (Canonical Event Schema)**
 - **Triage automático** con LLM + **Human-in-the-Loop (HITL)**
 - **Playbooks de respuesta** (bloqueo IP, notificaciones, artefactos)
-- **Métricas operativas y trazabilidad** (MTTD/MTTR, TTA, FPR) + auditoría
+- **Métricas operativas** (MTTD/MTTR) 
 
 ---
 
@@ -35,10 +35,10 @@ El **evento CEC** es el “contrato” compartido: cada agente recibe un objeto 
 
 1) **Ingesta (Wazuh → CEC)**  
 2) **Monitoreo / enrutamiento** (deduplicación, decisión de triage)  
-3) **Análisis/Triage (LLM + reglas + HITL opcional)**  
+3) **Análisis (LLM + reglas + HITL opcional)**  
 4) **Plan de respuesta** (qué hacer)  
-5) **Ejecución de respuesta** (hacerlo: firewall/tickets/notificaciones)  
-6) **Cierre y métricas** (MTTD/MTTR + evidencias)
+5) **Ejecución de respuesta** (hacerlo mediante acciones con: firewall/tickets/notificaciones)  
+6) **Cierre y métricas** (MTTD/MTTR)
 
 ---
 
@@ -70,12 +70,12 @@ Este workflow se ejecuta “como herramienta” desde otros flujos. Evalúa si e
 
 ---
 
-## 🎛️ Orquestador (dispatcher de herramientas)
+## 🎛️ Orquestador (con n8n Workflow Tool )
 Este agente actúa como “cerebro” de coordinación: recibe una solicitud (chat/comando), selecciona herramientas y encadena agentes (**Monitoring**, **Analysis**, **ResponsePlan**, **Execute**), y devuelve una salida al operador.
 
 ![Orquestador](./Orchestrator/docs/Orquestador.jpeg)
 
-**Idea principal:** el orquestador *no ejecuta todo dentro de un único flujo gigante*, sino que **llama herramientas** (sub-workflows) para mantener:
+**Idea principal:** el orquestador *no ejecuta todo dentro de un único flujo gigante*, sino que **llama herramientas** (sub-workflows y workflow tools) para mantener:
 - modularidad,
 - observabilidad por etapa,
 - reusabilidad (mismo “tool” para distintos disparadores).
@@ -158,15 +158,6 @@ El prototipo instrumenta timestamps y persistencia para medir, por ejemplo:
    - métricas.
 
 > Si quieres, agrega aquí un `.env.example` con variables tipo `WAZUH_URL`, `WAZUH_USER`, `WAZUH_PASS`, `TELEGRAM_TOKEN`, `DB_DSN`, etc.
-
----
-
-## 🛣️ Roadmap (ideas)
-- Enriquecimiento automático (TI feeds, GeoIP, reputación)
-- Detección de duplicados/correlación (ventanas temporales)
-- Aprobaciones HITL más robustas (roles, caducidad, auditoría)
-- Export de casos a ticketing (Jira/ServiceNow)
-- Suite de tests con eventos CEC “golden”
 
 ---
 
