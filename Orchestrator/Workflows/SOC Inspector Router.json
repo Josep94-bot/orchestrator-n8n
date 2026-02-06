@@ -1,0 +1,534 @@
+{
+  "name": "SOC Inspector Router",
+  "nodes": [
+    {
+      "parameters": {
+        "description": "INTERNAL PLANNER ONLY. Do NOT call any other tools.\n\nWhen invoked, output ONLY valid JSON (no markdown) with this exact schema:\n{\n  \"execution\": { \"run\": true|false, \"scope\": \"FULL|MONITOR_ONLY|ANALYSIS_ONLY|PLAN_ONLY|DIRECT_ACTION|EXPLANATION\", \"reason\": \"...\" },\n  \"retry_policy\": { \"max_attempts_per_tool\": 2, \"retry_only_if_input_changes\": true },\n  \"steps\": [\n    {\n      \"tool\": \"Think|tool: Run soc full|Call Monitoring|Call Analysis|Call Response|tool:Block/Unblock IP + port|Register/Unregister suspicious IP|tool: List capabilities|tool: Explain workflow|tool: Query metrics\",\n      \"run\": true|false,\n      \"reason\": \"...\"\n    }\n  ],\n  \"case_contract\": {\n    \"case_in\": [\"event_id\",\"wazuh_alert_id\",\"event_timestamp\",\"ts_ingest\"],\n    \"must_not_drop\": [\"any existing CASE fields\"],\n    \"merge_under\": [\"monitoring\",\"analysis\",\"response_plan\",\"execution\",\"orchestration\",\"metrics\",\"ioc\"]\n  },\n  \"stop_conditions\": [\n    \"If same tool already failed once and input is unchanged, STOP and return run=false with reason.\"\n  ]\n}\n\nPLANNING RULES (HARD):\n1) Minimal scope: choose the smallest scope that satisfies the request.\n\n2) FULL rule:\n   If automated alert arrives OR user asks FULL OR user provides alert JSON asking to run without specifying stage\n   => scope=FULL and call ONLY \"tool: Run soc full\".\n\n   IMPORTANT anti-false-positive:\n   - If the user pastes alert JSON but asks to explain/inspect/debug WITHOUT asking to execute,\n     do NOT choose FULL. Use EXPLANATION with \"tool: Explain workflow\" or execution.run=false.\n\n3) Directed stages (UPDATED for new design):\n   - MONITOR_ONLY => call ONLY \"Call Monitoring\"\n   - ANALYSIS_ONLY => call ONLY \"Call Analysis\"\n   - PLAN_ONLY (response planning) => call ONLY \"Call Response\"\n\n   IMPORTANT:\n   These \"Call ...\" sub-workflows already enforce dependencies/order internally.\n   Do NOT output multi-step chains like Monitoring → Analysis → Response.\n\n4) DIRECT_ACTION scope:\n   A) Firewall containment (block/unblock IP + optional port) => tool:Block/Unblock IP + port\n      Required: ip, action=block|unblock (port optional)\n      If missing ip or action, set execution.run=false and explain exactly what is missing.\n\n   B) IOC list management (register/unregister IP) => Register/Unregister suspicious IP\n      Required: ip, action=register|unregister\n      If missing ip or action, set execution.run=false and explain exactly what is missing.\n\n   C) Metrics / DB queries (MTTR/TTA, last incidents, filters, completeness) => tool: Query metrics\n\n5) EXPLANATION scope:\n   - Capability discovery => tool: List capabilities\n   - Workflow explanation => tool: Explain workflow\n\n6) Never include more than 5 steps.\n\n"
+      },
+      "type": "@n8n/n8n-nodes-langchain.toolThink",
+      "typeVersion": 1.1,
+      "position": [
+        1488,
+        288
+      ],
+      "id": "2fed57c5-f31c-4354-9a68-6f549c53bbe0",
+      "name": "Think"
+    },
+    {
+      "parameters": {
+        "model": {
+          "__rl": true,
+          "value": "gpt-3.5-turbo",
+          "mode": "list",
+          "cachedResultName": "gpt-3.5-turbo"
+        },
+        "options": {
+          "temperature": 0,
+          "maxRetries": 2
+        }
+      },
+      "type": "@n8n/n8n-nodes-langchain.lmChatOpenAi",
+      "typeVersion": 1.2,
+      "position": [
+        528,
+        48
+      ],
+      "id": "b6c7707e-2789-4030-b893-38473105a292",
+      "name": "OpenAI Chat Inspector",
+      "credentials": {
+        "openAiApi": {
+          "id": "yt3NGZbVrbZuYATf",
+          "name": "OpenAi account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "// build_case_for_inspector (Wazuh webhook -> Inspector)\nconst env = $json ?? {};\nconst alert = env.body ?? env; // payload real del webhook\nconst raw_alert = (typeof alert === \"string\") ? alert : JSON.stringify(alert);\n\nreturn [{\n  json: {\n    mode: \"SOC\",\n    parse_ok: true,\n    parse_source: \"wazuh_webhook\",\n    parse_reason: \"\",\n    parse_error: \"\",\n    chatInput: \"\",\n\n    // lo importante:\n    soc_payload: alert,\n    raw_alert\n  }\n}];\n\n"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        640,
+        -160
+      ],
+      "id": "2ffe1c8b-a26b-4e86-ad71-e8371a0a9dff",
+      "name": "Build case for inspector",
+      "alwaysOutputData": true
+    },
+    {
+      "parameters": {
+        "promptType": "define",
+        "text": "=={{\n  [\n    \"INPUT_CONTEXT\",\n    \"mode: \" + ($json.mode ?? \"UNKNOWN\"),\n    \"parse_ok: \" + ($json.parse_ok ?? false),\n    \"parse_source: \" + ($json.parse_source ?? \"\"),\n    \"parse_reason: \" + ($json.parse_reason ?? \"\"),\n    \"parse_error: \" + ($json.parse_error ?? \"\"),\n    \"\",\n    \"USER_TEXT\",\n    String($json.chatInput ?? $json.input ?? $json.query ?? \"\"),\n    \"\",\n    \"SOC_PAYLOAD\",\n    $json.soc_payload ? JSON.stringify($json.soc_payload, null, 2) : \"\",\n    \"\",\n    \"RAW_ALERT\",\n    $json.raw_alert ? String($json.raw_alert) : \"\"\n  ].join(\"\\n\")\n}}\n",
+        "options": {
+          "systemMessage": "You are the SOC Inspector and Supervisor Agent of a multi-agent SOC system in n8n.\n\nYou DO NOT execute SOC logic yourself.\nYou ONLY:\n- interpret user intent,\n- decide the minimum required scope,\n- choose the correct tool(s),\n- and orchestrate execution order.\nYou MUST always respond to the user in Spanish.\n\n────────────────────────────────\nCANONICAL TOOL NAMES (USE EXACTLY)\n────────────────────────────────\n- Think\n- tool: Run soc full\n- Call Monitoring\n- Call Analysis\n- Call Response\n- tool:Block/Unblock IP + port\n- Register/Unregister suspicious IP\n- tool: List capabilities\n- tool: Explain workflow\n- tool: Query metrics\n\n────────────────────────────────\nMANDATORY THINK STEP (HARD RULE)\n────────────────────────────────\nBefore calling ANY operational tool, you MUST call Think.\n\nThink MUST output STRICT JSON ONLY (no markdown) following the schema provided in the Think tool instructions.\nNever include more than 5 steps in Think.\nThink output is INTERNAL ONLY. Never show it to the user.\n\n────────────────────────────────\nMINIMUM SCOPE RULE (HARD RULE)\n────────────────────────────────\nAlways pick the smallest scope that satisfies the request.\n\nClassify each request into exactly one:\nA) FULL SOC EXECUTION\nB) DIRECTED STAGE EXECUTION\nC) DIRECT ACTION\nD) METRICS / DB QUERY\nE) EXPLANATION / DISCOVERY\nF) REVIEW / DIAGNOSIS (no operational tools unless explicitly requested)\n\n────────────────────────────────\nA) PRIMARY FULL EXECUTION RULE (HARD RULE)\n────────────────────────────────\nIf ANY of the following is true:\n1) An alert arrives from Wazuh webhook (automated alert)\n2)The user provides an alert in JSON format through chatInput and explicitly asks to \"execute the full SOC\", \"run the full SOC\", \"ejecutar el SOC completo\"  \nStrictly: \n➡️ You MUST call tool: Run soc full\n➡️ You MUST NOT call individual tools manually\n\nAnti-false-positive:\nIf the user provides alert JSON but asks to explain, debug, interpret, or summarize fields WITHOUT requesting execution,\ndo NOT run tool: Run soc full. Treat it as E) or F).\n\n────────────────────────────────\nB) DIRECTED STAGE EXECUTION (SIMPLIFIED)\n────────────────────────────────\nIf the user gives a json alert and explicitly asks for a specific stage ONLY (e.g., \"solo monitoring\", \"solo analysis\", \"solo response\"):\n➡️ Call ONLY the corresponding tool:\n- \"solo Monitoring\" => Call Monitoring\n- \"solo Analysis\"   => Call Analysis\n- \"solo Response\" => Call Response\n\nIMPORTANT:\nYou MUST NOT add dependency-chain logic here.\nDo NOT escalate to tool: Run soc full unless rule (A) applies or the user asks FULL explicitly.\n\n────────────────────────────────\nC) DIRECT ACTION RULES (HARD RULES)\n────────────────────────────────\n\nA) BLOCK / UNBLOCK (firewall)\nIf the user explicitly requests direct containment like:\n- \"Bloquea la IP X\", \"Desbloquea la IP X\"\n- \"Bloquea IP X puerto Y\", \"Desbloquea IP X puerto Y\"\n\n➡️ Use tool:Block/Unblock IP + port\nRequired: ip, action=block|unblock (port optional)\nIf missing required fields, set execution.run=false and explain exactly what is missing.\n\nB) REGISTER / UNREGISTER (IOC list)\nIf the user explicitly requests list management like:\n- \"Registra/agrega la IP X en la lista\", \"marcar IP X como maliciosa/sospechosa\"\n- \"Eliminar/quitar la IP X de la lista\", \"desregistrar IP X\"\n\n➡️ Use Register/Unregister suspicious IP\nRequired: ip, action=register|unregister\nIf missing required fields, set execution.run=false and explain exactly what is missing.\n\n────────────────────────────────\nD) METRICS / DB QUERY (HARD RULE)\n────────────────────────────────\nIf the user asks about:\n- recent incidents/events stored in DB\n- MTTR/TTA, durations, timestamps completeness, outcomes\n- filtering by event_id or IP\n- “last N incidents”, “últimos N”, “top N”, “últimas X horas/días”\n➡️ Use tool: Query metrics\n\nDo NOT run Call Monitoring/Call Analysis/Call Response for historical metrics questions unless the user explicitly requests SOC execution.\n\n────────────────────────────────\nE) EXPLANATION / DISCOVERY\n────────────────────────────────\n- If the user asks what tools/workflows exist or what the system can do:\n  ➡️ Use tool: List capabilities\n\n- If the user asks to explain a workflow/tool by name, purpose, inputs/outputs, or failure modes:\n  ➡️ Use tool: Explain workflow\n\n────────────────────────────────\nCASE OBJECT CONTRACT (CRITICAL)\n────────────────────────────────\nAll operational SOC tools communicate through ONE shared CASE object.\n\nYou MUST:\n- Pass CASE using: { \"input\": CASE }\n- Preserve and propagate any existing CASE fields, especially:\n  event_id, wazuh_alert_id, event_timestamp, ts_ingest\n- Merge outputs under:\n  CASE.monitoring\n  CASE.analysis\n  CASE.response_plan\n  CASE.execution\n  CASE.orchestration\n  CASE.metrics\n  CASE.ioc\n\nNever invent fields.\nNever drop existing fields.\n\n────────────────────────────────\nTERMINATION & NO-LOOP RULE (HARD)\n────────────────────────────────\nIf a tool invocation fails:\n- You may attempt the SAME tool only ONCE more.\n- Retry ONLY if you can explicitly change the input or scope.\n- If the second attempt fails OR the input is unchanged, you MUST STOP.\n\nWhen you STOP:\nReturn a final Spanish message explaining:\n1) Which tool failed\n2) Concrete reason\n3) What exact input/action is needed from the user to continue\nNever attempt a third call.\n\n────────────────────────────────\nUSER OUTPUT RULES\n────────────────────────────────\nAlways respond in Spanish.\n\nFor SOC execution:\n1) Qué se detectó\n2) Qué herramientas se ejecutaron (en orden)\n3) Qué se ejecutó o se omitió y por qué\n4) Estado final del incidente\n5) Si se requiere aprobación humana (si aplica en tu sistema; no inventar)\n\nFor metrics queries:\n- Resumen (ventana temporal, filtros, conteo)\n- Hallazgos principales (promedios / casos sin métricas / outliers si aplica)\n- Próximos pasos (solo si el usuario los pide)\n\nFor inspection/explanation:\n- Answer clearly\n- Use tool: List capabilities or tool: Explain workflow when relevant.\n\nFor Directed Stage executions: \n- Make a summary with the object case returned by the agent called (Monitoring, Analysis, Response) and present it to the user. ",
+          "maxIterations": 3
+        }
+      },
+      "type": "@n8n/n8n-nodes-langchain.agent",
+      "typeVersion": 3,
+      "position": [
+        1056,
+        -160
+      ],
+      "id": "45078701-afc4-4c87-956c-7a11a0cd2c45",
+      "name": "Inspector",
+      "alwaysOutputData": false
+    },
+    {
+      "parameters": {
+        "description": "=Query stored SOC metrics/events (DB) and summarize. Use for questions about MTTR/TTA, last incidents, outcomes, timestamps completeness. {{ $json.chatInput }}",
+        "workflowId": {
+          "__rl": true,
+          "value": "w0RaAGKvZpjuj2bT",
+          "mode": "list",
+          "cachedResultUrl": "/workflow/w0RaAGKvZpjuj2bT",
+          "cachedResultName": "tool: Query metrics"
+        },
+        "workflowInputs": {
+          "mappingMode": "defineBelow",
+          "value": {},
+          "matchingColumns": [],
+          "schema": [],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": false
+        }
+      },
+      "type": "@n8n/n8n-nodes-langchain.toolWorkflow",
+      "typeVersion": 2.2,
+      "position": [
+        672,
+        144
+      ],
+      "id": "dc76ad44-7536-4426-a62f-f24037dfb186",
+      "name": "tool: Query metrics"
+    },
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "wazuh/alert",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2.1,
+      "position": [
+        432,
+        -160
+      ],
+      "id": "d75e844e-6d4e-454b-9de2-cfc9350174fd",
+      "name": "Ingesta Wazuh event",
+      "webhookId": "9c01e425-2776-4290-b7a1-f1cfeb6edffd"
+    },
+    {
+      "parameters": {
+        "public": true,
+        "options": {}
+      },
+      "type": "@n8n/n8n-nodes-langchain.chatTrigger",
+      "typeVersion": 1.4,
+      "position": [
+        640,
+        -320
+      ],
+      "id": "f5bd366c-d88f-4dc8-a6de-3e69d360a141",
+      "name": "Chat Intro",
+      "webhookId": "3d66a6d6-da4e-4f4c-a97a-cc76e3994dca"
+    },
+    {
+      "parameters": {
+        "description": "Explain a specific workflow by name (Monitoring, Analysis, ResponsePlan, ResponseExecute, Orquestador). Returns nodes, inputs, outputs, and common failure modes.",
+        "workflowId": {
+          "__rl": true,
+          "value": "e9zcOYlWghV8nXFi",
+          "mode": "list",
+          "cachedResultUrl": "/workflow/e9zcOYlWghV8nXFi",
+          "cachedResultName": "tool: Explain workflow"
+        },
+        "workflowInputs": {
+          "mappingMode": "defineBelow",
+          "value": {},
+          "matchingColumns": [],
+          "schema": [],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": false
+        }
+      },
+      "type": "@n8n/n8n-nodes-langchain.toolWorkflow",
+      "typeVersion": 2.2,
+      "position": [
+        768,
+        272
+      ],
+      "id": "55f8baf7-6ae4-4d3f-84fb-d488f749c747",
+      "name": "tool: Explain workflow"
+    },
+    {
+      "parameters": {
+        "description": "List available SOC workflows/tools and their expected inputs/outputs. Use this when user asks about tools or capabilities.",
+        "workflowId": {
+          "__rl": true,
+          "value": "v8EwqLhB7Mp4KvPp",
+          "mode": "list",
+          "cachedResultUrl": "/workflow/v8EwqLhB7Mp4KvPp",
+          "cachedResultName": "tool: List capabilities"
+        },
+        "workflowInputs": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "query": "={{ $json.chatInput }}"
+          },
+          "matchingColumns": [],
+          "schema": [],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": false
+        }
+      },
+      "type": "@n8n/n8n-nodes-langchain.toolWorkflow",
+      "typeVersion": 2.2,
+      "position": [
+        864,
+        352
+      ],
+      "id": "a708c0a5-46e2-4cf7-b8e3-d2223f47203b",
+      "name": "tool: List capabilities"
+    },
+    {
+      "parameters": {
+        "workflowId": {
+          "__rl": true,
+          "value": "hkA1ALVXNbW3Memf",
+          "mode": "list",
+          "cachedResultUrl": "/workflow/hkA1ALVXNbW3Memf",
+          "cachedResultName": "tool: Run soc full"
+        },
+        "workflowInputs": {
+          "mappingMode": "defineBelow",
+          "value": {},
+          "matchingColumns": [],
+          "schema": [],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": false
+        }
+      },
+      "type": "@n8n/n8n-nodes-langchain.toolWorkflow",
+      "typeVersion": 2.2,
+      "position": [
+        1376,
+        336
+      ],
+      "id": "71fdc794-fcff-4b78-ab14-e8352a3fb28e",
+      "name": "tool: Run soc full"
+    },
+    {
+      "parameters": {
+        "workflowId": {
+          "__rl": true,
+          "value": "zYNEc0lGp4cw2wJ5",
+          "mode": "list",
+          "cachedResultUrl": "/workflow/zYNEc0lGp4cw2wJ5",
+          "cachedResultName": "Block/Unblock IP + port"
+        },
+        "workflowInputs": {
+          "mappingMode": "defineBelow",
+          "value": {},
+          "matchingColumns": [],
+          "schema": [],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": false
+        }
+      },
+      "type": "@n8n/n8n-nodes-langchain.toolWorkflow",
+      "typeVersion": 2.2,
+      "position": [
+        1584,
+        128
+      ],
+      "id": "97d5f8e9-146c-48d5-8f7f-fff0704db594",
+      "name": "tool:Block/Unblock IP + port"
+    },
+    {
+      "parameters": {
+        "workflowId": {
+          "__rl": true,
+          "value": "wzhRigymIVIwiaFi",
+          "mode": "list",
+          "cachedResultUrl": "/workflow/wzhRigymIVIwiaFi",
+          "cachedResultName": "Monitoring"
+        },
+        "workflowInputs": {
+          "mappingMode": "defineBelow",
+          "value": {},
+          "matchingColumns": [],
+          "schema": [],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": false
+        }
+      },
+      "type": "@n8n/n8n-nodes-langchain.toolWorkflow",
+      "typeVersion": 2.2,
+      "position": [
+        1008,
+        384
+      ],
+      "id": "de7c7c3e-1a5b-42b9-9185-e71b5832354c",
+      "name": "Call Monitoring"
+    },
+    {
+      "parameters": {
+        "workflowId": {
+          "__rl": true,
+          "value": "HscvVOdXbzsLAHTj",
+          "mode": "list",
+          "cachedResultUrl": "/workflow/HscvVOdXbzsLAHTj",
+          "cachedResultName": "Call Analysis"
+        },
+        "workflowInputs": {
+          "mappingMode": "defineBelow",
+          "value": {},
+          "matchingColumns": [],
+          "schema": [],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": false
+        }
+      },
+      "type": "@n8n/n8n-nodes-langchain.toolWorkflow",
+      "typeVersion": 2.2,
+      "position": [
+        1136,
+        400
+      ],
+      "id": "5ca5fdf4-f6ca-461d-9968-c48e58097941",
+      "name": "Call Analysis"
+    },
+    {
+      "parameters": {
+        "workflowId": {
+          "__rl": true,
+          "value": "Ygg6lG6P88Urs4Rm",
+          "mode": "list",
+          "cachedResultUrl": "/workflow/Ygg6lG6P88Urs4Rm",
+          "cachedResultName": "Call Response"
+        },
+        "workflowInputs": {
+          "mappingMode": "defineBelow",
+          "value": {},
+          "matchingColumns": [],
+          "schema": [],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": false
+        }
+      },
+      "type": "@n8n/n8n-nodes-langchain.toolWorkflow",
+      "typeVersion": 2.2,
+      "position": [
+        1248,
+        384
+      ],
+      "id": "4b350c3b-b232-4550-994d-4ee926fbae5f",
+      "name": "Call Response"
+    },
+    {
+      "parameters": {
+        "workflowId": {
+          "__rl": true,
+          "value": "kiZGMchZRla6vwQY",
+          "mode": "list",
+          "cachedResultUrl": "/workflow/kiZGMchZRla6vwQY",
+          "cachedResultName": "Register/Unregister suspicious IP"
+        },
+        "workflowInputs": {
+          "mappingMode": "defineBelow",
+          "value": {},
+          "matchingColumns": [],
+          "schema": [],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": false
+        }
+      },
+      "type": "@n8n/n8n-nodes-langchain.toolWorkflow",
+      "typeVersion": 2.2,
+      "position": [
+        1744,
+        48
+      ],
+      "id": "8cd1cc68-e830-451d-bfe5-11176df2b10e",
+      "name": "tool: Register/Unregister suspicious IP"
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "Think": {
+      "ai_tool": [
+        [
+          {
+            "node": "Inspector",
+            "type": "ai_tool",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "OpenAI Chat Inspector": {
+      "ai_languageModel": [
+        [
+          {
+            "node": "Inspector",
+            "type": "ai_languageModel",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build case for inspector": {
+      "main": [
+        [
+          {
+            "node": "Inspector",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Inspector": {
+      "main": [
+        []
+      ]
+    },
+    "tool: Query metrics": {
+      "ai_tool": [
+        [
+          {
+            "node": "Inspector",
+            "type": "ai_tool",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Ingesta Wazuh event": {
+      "main": [
+        [
+          {
+            "node": "Build case for inspector",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Chat Intro": {
+      "main": [
+        [
+          {
+            "node": "Inspector",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "tool: Explain workflow": {
+      "ai_tool": [
+        [
+          {
+            "node": "Inspector",
+            "type": "ai_tool",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "tool: List capabilities": {
+      "ai_tool": [
+        [
+          {
+            "node": "Inspector",
+            "type": "ai_tool",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "tool: Run soc full": {
+      "ai_tool": [
+        [
+          {
+            "node": "Inspector",
+            "type": "ai_tool",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "tool:Block/Unblock IP + port": {
+      "ai_tool": [
+        [
+          {
+            "node": "Inspector",
+            "type": "ai_tool",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Call Monitoring": {
+      "ai_tool": [
+        [
+          {
+            "node": "Inspector",
+            "type": "ai_tool",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Call Analysis": {
+      "ai_tool": [
+        [
+          {
+            "node": "Inspector",
+            "type": "ai_tool",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Call Response": {
+      "ai_tool": [
+        [
+          {
+            "node": "Inspector",
+            "type": "ai_tool",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "tool: Register/Unregister suspicious IP": {
+      "ai_tool": [
+        [
+          {
+            "node": "Inspector",
+            "type": "ai_tool",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": true,
+  "settings": {
+    "executionOrder": "v1",
+    "timeSavedMode": "fixed",
+    "callerPolicy": "workflowsFromSameOwner",
+    "availableInMCP": true
+  },
+  "versionId": "05800b6a-a2d9-4e61-b551-f37357369756",
+  "meta": {
+    "templateCredsSetupCompleted": true,
+    "instanceId": "5f4321b383184a4332b5d1e5cb6e70ea61441780fd28eb1fe8c95676a3e6f306"
+  },
+  "id": "yIAD7nBLPXxFJybG",
+  "tags": []
+}

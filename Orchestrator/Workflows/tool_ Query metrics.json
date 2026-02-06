@@ -1,0 +1,113 @@
+{
+  "name": "tool: Query metrics",
+  "nodes": [
+    {
+      "parameters": {
+        "jsCode": "// Output: siempre devuelve 1 item con { response, summary, rows }\n// Ahora: muestra SIEMPRE los primeros 5 eventos y solo entrega esos 5 en rows\n\nconst inNorm = $node[\"Input normalize\"]?.json ?? $json;\nconst raw = $input.all().map(i => i.json);\n\n// Heurística para validar filas reales\nconst looksLikeRow = (r) => {\n  if (!r || typeof r !== \"object\") return false;\n  return (\n    r.event_timestamp != null ||\n    r.ts_ingest != null ||\n    r.wazuh_alert_id != null ||\n    r.rule_id != null ||\n    r.src_ip != null ||\n    r.dest_ip != null ||\n    r.dst_ip != null ||\n    r.location != null\n  );\n};\n\nconst rows = raw.filter(looksLikeRow);\nconst totalEvents = rows.length;\nconst MAX_SHOW = 5;  // Siempre mostrar 5\n\nconst summary = {\n  ok: true,\n  count: totalEvents,\n  limit: inNorm.limit ?? 20,\n  since_hours: inNorm.since_hours ?? 24,\n  filters: {\n    event_id: inNorm.event_id ?? null,\n    ip: inNorm.ip ?? null,\n    include_fr_metrics: inNorm.include_fr_metrics ?? false,\n    label_predicha: inNorm.label_predicha ?? null,\n    severidad_predicha: inNorm.severidad_predicha ?? null,\n    score_conf_min: inNorm.score_conf_min ?? null,\n    mttr_min: inNorm.mttr_min ?? null,\n    mttr_max: inNorm.mttr_max ?? null,\n    tta_min: inNorm.tta_min ?? null,\n    tta_max: inNorm.tta_max ?? null\n  }\n};\n\nlet response = \"\";\n\nif (rows.length === 0) {\n  const hintEvent = summary.filters.event_id\n    ? `No encontré el evento ${summary.filters.event_id}.`\n    : \"No encontré eventos con esos filtros.\";\n  response =\n    `${hintEvent}\\n` +\n    `Ventana aplicada: últimas ${summary.since_hours}h (limit=${summary.limit}).\\n` +\n    `Sugerencias:\\n` +\n    `- Si buscas un event_id antiguo, prueba aumentar since_hours (ej. \"event_id=XYZ 30d\").\\n` +\n    `- Verifica que el event_id exista en la base de datos de eventos.\\n` +\n    `- Si esperabas resultados y no hay, revisa el criterio de tiempo (ts_ingest/event_timestamp).`;\n} else {\n  const shown = rows.slice(0, MAX_SHOW);\n  const header = `Se encontraron ${totalEvents} eventos. Mostrando los primeros ${MAX_SHOW}:\\n`;\n\n  const lines = shown.map((r) => {\n    const when = r.ts_ingest ?? r.event_timestamp ?? \"N/D\";\n    const src = r.src_ip ?? \"N/D\";\n    const dst = r.dest_ip ?? r.dst_ip ?? \"N/D\";\n    const wazuh = r.wazuh_alert_id ?? \"N/D\";\n    const rule = r.rule_id ?? \"N/D\";\n    return `• event_id ${r.event_id ?? \"N/D\"} | ${when} | ${src} → ${dst} | wazuh=${wazuh} | rule=${rule}`;\n  });\n\n  response = header + lines.join(\"\\n\");\n\n  return [\n    {\n      json: {\n        response,\n        summary,\n        rows: shown  // <- Aquí está el ajuste para truncar efectivamente el array\n      }\n    }\n  ];\n}\n\n// Asegura que siempre se devuelva una estructura válida\nreturn [\n  {\n    json: {\n      response,\n      summary,\n      rows: []  // en caso de que rows estuviera vacío\n    }\n  }\n];\n\n"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        432,
+        -16
+      ],
+      "id": "4f4fa552-7d9f-4ce9-87e7-a7959897cf89",
+      "name": "Output",
+      "alwaysOutputData": true
+    },
+    {
+      "parameters": {
+        "jsCode": "// tool_query_metrics - normalize inputs (v3 robust)\n// - Siempre devuelve query/input/limit/since_hours + filtros\n// - Si se pide event_id y NO se indicó ventana, **ya NO amplía since_hours** (mantiene 24h por defecto)\n\nconst raw =\n  ($json.input ?? $json.query ?? $json.chatInput ?? $json.message ?? \"\")  \n    .toString()\n    .trim();\n\nconst text = raw.length ? raw : \"latest incidents\";\n\nconst pickInt = (re, def) => {\n  const m = text.match(re);\n  return m ? parseInt(m[1], 10) : def;\n};\n\nconst pickFloat = (re, def) => {\n  const m = text.match(re);\n  return m ? parseFloat(m[1]) : def;\n};\n\n// Detecta si el usuario especificó explícitamente ventana temporal\nconst hasExplicitHours = /(\\d+)\\s*(?:h|horas?)/i.test(text);\nconst hasExplicitDays  = /(\\d+)\\s*(?:d|d[ií]as?)/i.test(text);\nconst hasExplicitWindow = hasExplicitHours || hasExplicitDays;\n\n// Defaults\nlet limit = 20;\nlet since_hours = 24;\n\n// Parsear \"limit/top/últimos N\"\nlimit = pickInt(/(?:limit|top|ultim(?:os|as))\\s*(\\d+)/i, limit);\n\n// Parsear ventana temporal en horas o días\nsince_hours = pickInt(/(\\d+)\\s*(?:h|horas?)/i, since_hours);\nconst mDays = text.match(/(\\d+)\\s*(?:d|d[ií]as?)/i);\nif (mDays) since_hours = parseInt(mDays[1], 10) * 24;\n\n// IP (IPv4)\nconst ipMatch = text.match(\n  /\\b(?:(?:25[0-5]|2[0-4]\\d|[01]?\\d?\\d)\\.){3}(?:25[0-5]|2[0-4]\\d|[01]?\\d?\\d)\\b/\n);\nconst ip = ipMatch ? ipMatch[0] : null;\n\n// event_id: soporta formatos “event_id=284”, “event id 284”, “evento 284”, “id 284”\nlet event_id = null;\n{\n  const m1 = text.match(/\\bevent[_\\s-]?id\\s*[:=]?\\s*(\\d+)\\b/i);\n  const m2 = text.match(/\\b(?:evento|event)\\s*(\\d+)\\b/i);\n  const m3 = text.match(/\\bid\\s*[:=]?\\s*(\\d+)\\b/i);\n  const pick = m1?.[1] ?? m2?.[1] ?? m3?.[1] ?? null;\n  event_id = pick ? parseInt(pick, 10) : null;\n}\n\n// Filtros fr_metrics opcionales\nconst include_fr_metrics =\n  /fr_metrics|metrics|m[eé]trica|tta|mttr|confianza|score|label_predicha|severidad_predicha|action_status/i\n    .test(text);\n\nconst label_predicha = (() => {\n  const m = text.match(/\\blabel[_\\s-]?predicha\\s*[:=]\\s*([a-z0-9_-]+)/i);\n  return m ? m[1] : null;\n})();\n\nconst severidad_predicha = (() => {\n  const m = text.match(/\\bseveridad[_\\s-]?predicha\\s*[:=]\\s*([a-z0-9_-]+)/i);\n  return m ? m[1] : null;\n})();\n\nconst score_conf_min = (() => {\n  const v = pickFloat(\n    /\\b(?:confianza|score|confidence)\\s*(?:>=|>|mayor\\s+a)\\s*([0-9]*\\.?[0-9]+)\\b/i,\n    null\n  );\n  return Number.isFinite(v) ? v : null;\n})();\n\nconst mttr_min = pickInt(/\\bmttr\\s*(?:>=|>|mayor\\s+a)\\s*(\\d+)\\b/i, null);\nconst mttr_max = pickInt(/\\bmttr\\s*(?:<=|<|menor\\s+a)\\s*(\\d+)\\b/i, null);\nconst tta_min  = pickInt(/\\btta\\s*(?:>=|>|mayor\\s+a)\\s*(\\d+)\\b/i, null);\nconst tta_max  = pickInt(/\\btta\\s*(?:<=|<|menor\\s+a)\\s*(\\d+)\\b/i, null);\n\n// **Ya no ampliamos since_hours por event_id** – mantenemos 24h por defecto\n// if (event_id !== null && !hasExplicitWindow) {\n//   since_hours = 24 * 365;  // (Eliminado: no expandir a 1 año)\n// }\n\nreturn [\n  {\n    json: {\n      ...$json,\n      query: text,\n      input: text,\n      limit,\n      since_hours,\n      ip,\n      event_id,\n      include_fr_metrics,\n      label_predicha,\n      severidad_predicha,\n      score_conf_min,\n      mttr_min,\n      mttr_max,\n      tta_min,\n      tta_max\n    }\n  }\n];\n\n"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        128,
+        -16
+      ],
+      "id": "60c402ba-9a9d-4912-81b7-68e72e9a5d10",
+      "name": "Input normalize"
+    },
+    {
+      "parameters": {
+        "inputSource": "passthrough"
+      },
+      "type": "n8n-nodes-base.executeWorkflowTrigger",
+      "typeVersion": 1.1,
+      "position": [
+        -32,
+        -16
+      ],
+      "id": "4fce9a31-143d-4353-bf5c-c2e750211d0e",
+      "name": "Intro Query metrics",
+      "alwaysOutputData": true
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SET NOCOUNT ON;\n\n-- Inputs (nota: cambia /''/g por /'/g si quieres escapar bien comillas)\nDECLARE @limit INT =\n  TRY_CONVERT(INT, NULLIF('{{ ($json.limit ?? \"\").toString().replace(/'/g,\"''\") }}',''));\n\nDECLARE @since_hours INT =\n  TRY_CONVERT(INT, NULLIF('{{ ($json.since_hours ?? \"\").toString().replace(/'/g,\"''\") }}',''));\n\nDECLARE @ip NVARCHAR(64) =\n  NULLIF('{{ ($json.ip ?? \"\").toString().replace(/'/g,\"''\") }}','');\n\nDECLARE @event_id BIGINT =\n  TRY_CONVERT(BIGINT, NULLIF('{{ ($json.event_id ?? \"\").toString().replace(/'/g,\"''\") }}',''));\n\nDECLARE @triage_priority NVARCHAR(32) =\n  NULLIF('{{ ($json.triage_priority ?? \"\").toString().replace(/'/g,\"''\") }}','');\n\nDECLARE @label_wazuh NVARCHAR(32) =\n  NULLIF('{{ ($json.label_wazuh ?? \"\").toString().replace(/'/g,\"''\") }}','');\n\nDECLARE @monitoring_classification NVARCHAR(32) =\n  NULLIF('{{ ($json.monitoring_classification ?? \"\").toString().replace(/'/g,\"''\") }}','');\n\nDECLARE @label_predicha NVARCHAR(128) =\n  NULLIF('{{ ($json.label_predicha ?? \"\").toString().replace(/'/g,\"''\") }}','');\n\nDECLARE @severidad_predicha NVARCHAR(64) =\n  NULLIF('{{ ($json.severidad_predicha ?? \"\").toString().replace(/'/g,\"''\") }}','');\n\nDECLARE @score_conf_min FLOAT =\n  TRY_CONVERT(FLOAT, NULLIF('{{ ($json.score_conf_min ?? \"\").toString().replace(/'/g,\"''\") }}',''));\n\nDECLARE @mttr_min INT =\n  TRY_CONVERT(INT, NULLIF('{{ ($json.mttr_min ?? \"\").toString().replace(/'/g,\"''\") }}',''));\nDECLARE @mttr_max INT =\n  TRY_CONVERT(INT, NULLIF('{{ ($json.mttr_max ?? \"\").toString().replace(/'/g,\"''\") }}',''));\n\nDECLARE @tta_min INT =\n  TRY_CONVERT(INT, NULLIF('{{ ($json.tta_min ?? \"\").toString().replace(/'/g,\"''\") }}',''));\nDECLARE @tta_max INT =\n  TRY_CONVERT(INT, NULLIF('{{ ($json.tta_max ?? \"\").toString().replace(/'/g,\"''\") }}',''));\n\n-- Defaults + guardrails\nSET @limit       = COALESCE(@limit, 20);\nSET @since_hours = COALESCE(@since_hours, 24);\n\nIF (@limit < 1)   SET @limit = 1;\nIF (@limit > 200) SET @limit = 200;\n\nIF (@since_hours < 1)    SET @since_hours = 1;\nIF (@since_hours > 8760) SET @since_hours = 8760;\n\nDECLARE @since_dt DATETIME2(7) = DATEADD(HOUR, -@since_hours, SYSUTCDATETIME());\n\nSELECT TOP (CASE WHEN @event_id IS NOT NULL THEN 1 ELSE @limit END)\n  e.event_id,\n  e.campaign_id,\n  e.scenario_id,\n  e.wazuh_alert_id,\n  e.event_timestamp,\n  e.ts_ingest,\n  e.src_ip, e.dst_ip, e.src_port, e.dst_port,\n  e.agent_name,\n  e.rule_id, e.rule_level, e.rule_mitre_id, e.rule_mitre_tactic,\n  e.label_wazuh,\n  e.triage_priority, e.triage_risk, e.triage_severity,\n  e.monitoring_classification, e.monitoring_confidence, e.monitoring_summary,\n\n  fm.metric_scope,\n  fm.ts_analysis_start, fm.ts_analysis_end,\n  fm.ts_hitl_start, fm.ts_hitl_end,\n  fm.ts_response_start, fm.ts_response_end,\n  fm.hitl_wait_seconds,\n  fm.tta_sec, fm.mttr_sec,\n  fm.label_predicha, fm.severidad_predicha, fm.score_confidence,\n  fm.playbook, fm.selected_option, fm.requires_approval,\n  fm.hitl_decision, fm.hitl_timeout,\n  fm.action_type, fm.action_status,\n  fm.computed_at,\n  fm.metrics_json\nFROM dbo.cec_events e WITH (NOLOCK)\nOUTER APPLY (\n  SELECT TOP (1) *\n  FROM dbo.fr_metrics fm WITH (NOLOCK)\n  WHERE fm.event_id = e.event_id\n  ORDER BY fm.computed_at DESC\n) fm\nWHERE\n  (\n    (@event_id IS NOT NULL AND e.event_id = @event_id)\n    OR\n    (@event_id IS NULL AND COALESCE(e.ts_ingest, e.event_timestamp) >= @since_dt)\n  )\n  AND (@ip IS NULL OR e.src_ip = @ip OR e.dst_ip = @ip)\n  AND (@triage_priority IS NULL OR e.triage_priority = @triage_priority)\n  AND (@label_wazuh IS NULL OR e.label_wazuh = @label_wazuh)\n  AND (@monitoring_classification IS NULL OR e.monitoring_classification = @monitoring_classification)\n\n  AND (@label_predicha IS NULL OR fm.label_predicha LIKE '%' + @label_predicha + '%')\n  AND (@severidad_predicha IS NULL OR fm.severidad_predicha = @severidad_predicha)\n  AND (@score_conf_min IS NULL OR fm.score_confidence >= @score_conf_min)\n  AND (@mttr_min IS NULL OR fm.mttr_sec >= @mttr_min)\n  AND (@mttr_max IS NULL OR fm.mttr_sec <= @mttr_max)\n  AND (@tta_min  IS NULL OR fm.tta_sec  >= @tta_min)\n  AND (@tta_max  IS NULL OR fm.tta_sec  <= @tta_max)\nORDER BY\n  COALESCE(e.ts_ingest, e.event_timestamp) DESC,\n  e.event_id DESC;\n"
+      },
+      "type": "n8n-nodes-base.microsoftSql",
+      "typeVersion": 1.1,
+      "position": [
+        288,
+        -16
+      ],
+      "id": "9765e7f6-2250-49d1-a46d-c8baf4197d0b",
+      "name": "Query metrics",
+      "credentials": {
+        "microsoftSql": {
+          "id": "59sSXaGtmRRjhh5e",
+          "name": "Microsoft SQL account"
+        }
+      }
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "Input normalize": {
+      "main": [
+        [
+          {
+            "node": "Query metrics",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Intro Query metrics": {
+      "main": [
+        [
+          {
+            "node": "Input normalize",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Query metrics": {
+      "main": [
+        [
+          {
+            "node": "Output",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": true,
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "versionId": "7f998732-f553-4cd7-9297-ae6852515600",
+  "meta": {
+    "templateCredsSetupCompleted": true,
+    "instanceId": "5f4321b383184a4332b5d1e5cb6e70ea61441780fd28eb1fe8c95676a3e6f306"
+  },
+  "id": "w0RaAGKvZpjuj2bT",
+  "tags": []
+}

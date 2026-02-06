@@ -1,0 +1,177 @@
+{
+  "name": "Summarizer",
+  "nodes": [
+    {
+      "parameters": {
+        "promptType": "define",
+        "text": "You are the SOC Orchestrator.\n\nROLE:\nYou do NOT analyze, classify, decide, predict, or execute actions.\n\nYou ONLY consolidate, normalize, and summarize data that has ALREADY been produced by:\n- monitoring\n- analysis\n- response planning\n- human-in-the-loop (if present)\n- response execution\n- metrics calculation\n\nRULES (STRICT):\n- Do NOT invent, infer, or modify any values.\n- Do NOT add new IPs, IDs, timestamps, or entities.\n- If a field is missing, return null.\n- Preserve all original identifiers and timestamps.\n- Be deterministic and conservative.\n- IMPORTANT: Keep types exactly as specified in the OUTPUT schema. Do not wrap numbers in quotes.\n\nINPUT:\nYou receive ONE fully enriched SOC event as JSON:\nCASE_JSON (do not modify):\n{{$json.case_json}}\n\nOUTPUT (MANDATORY):\nReturn ONLY valid minified JSON (single line), no markdown, no comments, with EXACTLY this structure:\n\n{\n  \"output\": {\n    \"orchestrator_summary\": {\n      \"event_id\": number|string,\n      \"final_state\": \"New|Investigating|Mitigating|Closed|FalsePositive\"|null,\n      \"human_in_loop\": boolean|null,\n      \"playbook\": string|null,\n      \"response_outcome\": string|null\n    },\n    \"metrics_snapshot\": {\n      \"ts_ingest\": string|null,\n      \"ts_analysis_start\": string|null,\n      \"ts_analysis_end\": string|null,\n      \"ts_response_start\": string|null,\n      \"ts_response_end\": string|null,\n      \"tta_sec\": number|null,\n      \"mttr_sec\": number|null,\n      \"hitl_wait_sec\": number|null\n    }\n  }\n}\n",
+        "batching": {}
+      },
+      "type": "@n8n/n8n-nodes-langchain.chainLlm",
+      "typeVersion": 1.7,
+      "position": [
+        80,
+        208
+      ],
+      "id": "122e60ee-8a75-486c-8d91-b2c0ea590c21",
+      "name": "Summarizer"
+    },
+    {
+      "parameters": {
+        "model": {
+          "__rl": true,
+          "value": "gpt-3.5-turbo",
+          "mode": "list",
+          "cachedResultName": "gpt-3.5-turbo"
+        },
+        "builtInTools": {},
+        "options": {
+          "temperature": 0,
+          "maxRetries": 2
+        }
+      },
+      "type": "@n8n/n8n-nodes-langchain.lmChatOpenAi",
+      "typeVersion": 1.3,
+      "position": [
+        48,
+        384
+      ],
+      "id": "ea496bcd-8443-4fe7-80d9-08cb418a40e0",
+      "name": "OpenAI Chat Summarizer",
+      "credentials": {
+        "openAiApi": {
+          "id": "yt3NGZbVrbZuYATf",
+          "name": "OpenAi account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "// tool_input_unwrap (mejorado + fail fast)\n// - Acepta: evento en raíz OR { input: CASE } OR JSON string en chatInput/text\n// - Extrae JSON embebido entre texto y/o ```json fences\n// - Normaliza ts_ingest\n// - FAIL FAST: exige event_id (y lo normaliza a number si se puede)\n\nfunction stripJsonFences(text) {\n  if (typeof text !== \"string\") return text;\n  return text\n    .replace(/```json\\s*([\\s\\S]*?)\\s*```/gi, \"$1\")\n    .replace(/```\\s*([\\s\\S]*?)\\s*```/g, \"$1\")\n    .trim();\n}\n\nfunction extractLikelyJson(text) {\n  if (typeof text !== \"string\") return text;\n  const s = text.trim();\n\n  // Caso exacto JSON\n  if ((s.startsWith(\"{\") && s.endsWith(\"}\")) || (s.startsWith(\"[\") && s.endsWith(\"]\"))) return s;\n\n  // JSON embebido {...}\n  const fo = s.indexOf(\"{\");\n  const lo = s.lastIndexOf(\"}\");\n  if (fo !== -1 && lo !== -1 && lo > fo) return s.slice(fo, lo + 1);\n\n  // JSON embebido [...]\n  const fa = s.indexOf(\"[\");\n  const la = s.lastIndexOf(\"]\");\n  if (fa !== -1 && la !== -1 && la > fa) return s.slice(fa, la + 1);\n\n  return s;\n}\n\nfunction safeParseJson(maybe) {\n  if (maybe == null) return { ok: false, value: null };\n  if (typeof maybe === \"object\") return { ok: true, value: maybe };\n  if (typeof maybe !== \"string\") return { ok: false, value: null };\n\n  const cleaned = extractLikelyJson(stripJsonFences(maybe));\n  try {\n    return { ok: true, value: JSON.parse(cleaned) };\n  } catch {\n    return { ok: false, value: null };\n  }\n}\n\nfunction toNumberIfPossible(v) {\n  if (v === null || v === undefined) return v;\n  if (typeof v === \"number\") return v;\n  const s = String(v).trim();\n  if (!s) return v;\n  const n = Number(s);\n  return Number.isFinite(n) ? n : v;\n}\n\nfunction looksLikeEvent(obj) {\n  if (!obj || typeof obj !== \"object\") return false;\n  return (\n    obj.event_id !== undefined ||\n    obj.rule_id !== undefined ||\n    obj.raw !== undefined ||\n    obj.event_timestamp !== undefined ||\n    obj.src_ip !== undefined ||\n    obj.dst_ip !== undefined\n  );\n}\n\nreturn items.map((item) => {\n  const incoming0 = item.json ?? {};\n\n  // ------------------------------------------------------------\n  // 0) CONTRATO TOOL: si viene { input: CASE } o { input: \"json\" }, desenvuelve\n  // ------------------------------------------------------------\n  let incoming = incoming0;\n\n  if (incoming0.input && typeof incoming0.input === \"object\") {\n    incoming = { ...incoming0, ...incoming0.input };\n    delete incoming.input;\n  } else if (typeof incoming0.input === \"string\") {\n    const p = safeParseJson(incoming0.input);\n    if (p.ok && p.value && typeof p.value === \"object\") {\n      incoming = { ...incoming0, ...p.value };\n      delete incoming.input;\n    }\n  }\n\n  // ------------------------------------------------------------\n  // 0.1) Texto de chat potencial + init event (FIX CRÍTICO)\n  // ------------------------------------------------------------\n  const chatText =\n    incoming.chatInput ??\n    incoming.text ??\n    incoming.message ??\n    incoming.body ??\n    incoming.payload ??\n    null;\n\n  let event = null;\n\n  // ------------------------------------------------------------\n  // 1) Si viene JSON string en chatInput/text -> parse\n  // ------------------------------------------------------------\n  if (typeof chatText === \"string\") {\n    const p = safeParseJson(chatText);\n    if (p.ok && p.value && typeof p.value === \"object\") event = p.value;\n  }\n\n  // ------------------------------------------------------------\n  // 2) Si incoming ya parece evento (root)\n  // ------------------------------------------------------------\n  if (!event && looksLikeEvent(incoming)) {\n    event = incoming;\n  }\n\n  // ------------------------------------------------------------\n  // 3) Fallback: construye evento mínimo (pero luego exigimos event_id)\n  // ------------------------------------------------------------\n  if (!event) {\n    event = {\n      raw_text: typeof chatText === \"string\" ? chatText : JSON.stringify(incoming),\n    };\n  }\n\n  // ------------------------------------------------------------\n  // 4) Normalización mínima\n  // ------------------------------------------------------------\n  const nowIso = new Date().toISOString();\n  event.ts_ingest = event.ts_ingest || nowIso;\n\n  // Mantener contexto de chat si existe\n  if (incoming.sessionId || incoming.chatId || incoming.chatInput) {\n    event._chat = {\n      sessionId: incoming.sessionId,\n      chatId: incoming.chatId,\n      chatInput: incoming.chatInput,\n    };\n  }\n\n  // ------------------------------------------------------------\n  // 5) FAIL FAST: event_id obligatorio\n  // ------------------------------------------------------------\n  if (\n    event.event_id === undefined ||\n    event.event_id === null ||\n    String(event.event_id).trim() === \"\"\n  ) {\n    throw new Error(\n      \"tool_input_unwrap: falta event_id. Ejecuta este workflow con un evento enriquecido o con { input: CASE }.\"\n    );\n  }\n\n  // Normaliza event_id a number si se puede\n  event.event_id = toNumberIfPossible(event.event_id);\n  event.case_json = JSON.stringify(event);\n  return { json: event };\n});\n"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -96,
+        208
+      ],
+      "id": "a23260d2-955f-428d-a842-5b48058f239f",
+      "name": "Input unwrap"
+    },
+    {
+      "parameters": {
+        "inputSource": "passthrough"
+      },
+      "type": "n8n-nodes-base.executeWorkflowTrigger",
+      "typeVersion": 1.1,
+      "position": [
+        -272,
+        208
+      ],
+      "id": "e64b5abf-31da-4bd7-9602-ca46ad126240",
+      "name": "Intro Summarizer",
+      "alwaysOutputData": true
+    },
+    {
+      "parameters": {
+        "jsCode": "// verify_orchestrator_output v2 (parse + fail-fast + merge)\n// - Soporta chainLlm: $json.response.generations[0][0].text (string JSON)\n// - Soporta salida ya parseada: $json.output o $json\n// - Valida tipos y hace merge con el CASE original (Input unwrap)\n\nconst original = $node[\"Input unwrap\"]?.json ?? {};\nconst incoming = $json ?? {};\n\nconst errors = [];\n\nfunction isNil(v) { return v === null || v === undefined; }\n\nfunction stripJsonFences(text) {\n  if (typeof text !== \"string\") return text;\n  return text\n    .replace(/```json\\s*([\\s\\S]*?)\\s*```/gi, \"$1\")\n    .replace(/```\\s*([\\s\\S]*?)\\s*```/g, \"$1\")\n    .trim();\n}\n\nfunction safeJsonParse(maybe) {\n  if (isNil(maybe)) return { ok: false, value: null };\n  if (typeof maybe === \"object\") return { ok: true, value: maybe };\n  if (typeof maybe !== \"string\") return { ok: false, value: null };\n  const cleaned = stripJsonFences(maybe);\n\n  // intento 1: parse directo\n  try { return { ok: true, value: JSON.parse(cleaned) }; } catch {}\n\n  // intento 2: extraer {...} embebido\n  const fo = cleaned.indexOf(\"{\");\n  const lo = cleaned.lastIndexOf(\"}\");\n  if (fo !== -1 && lo !== -1 && lo > fo) {\n    const slice = cleaned.slice(fo, lo + 1);\n    try { return { ok: true, value: JSON.parse(slice) }; } catch {}\n  }\n\n  return { ok: false, value: null };\n}\n\nfunction toFiniteNumber(v) {\n  if (isNil(v)) return null;\n  if (typeof v === \"number\" && Number.isFinite(v)) return v;\n  const s = String(v).trim();\n  if (!s) return null;\n  const n = Number(s);\n  return Number.isFinite(n) ? n : null;\n}\n\n// ------------------------------------------------------------\n// 1) Resolver el objeto \"out\" real que debe contener { output: {...} }\n// ------------------------------------------------------------\nlet parsed = null;\n\n// Caso A: chainLlm típico\nconst llmText =\n  incoming?.response?.generations?.[0]?.[0]?.text ??\n  incoming?.response?.generations?.[0]?.[0]?.message?.content ??\n  incoming?.text ??\n  null;\n\nif (typeof llmText === \"string\") {\n  const p = safeJsonParse(llmText);\n  if (p.ok) parsed = p.value;\n}\n\n// Caso B: ya viene parseado\nif (!parsed && typeof incoming === \"object\") parsed = incoming;\n\n// Normaliza: queremos out = parsed.output (si existe) o parsed (si ya es output)\nconst out = (parsed && parsed.output) ? parsed.output : parsed;\n\n// Validación base de estructura\nif (!out || typeof out !== \"object\") {\n  throw new Error(\"Orchestrator output verification failed: output is not an object\");\n}\n\n// ------------------------------------------------------------\n// 2) Validaciones\n// ------------------------------------------------------------\nconst orch = out.orchestrator_summary ?? null;\nconst ms = out.metrics_snapshot ?? null;\n\nif (!orch || typeof orch !== \"object\") errors.push(\"orchestrator_summary missing/invalid\");\nif (!ms || typeof ms !== \"object\") errors.push(\"metrics_snapshot missing/invalid\");\n\n// event_id requerido y válido (num o string numérico). Se normaliza a number finito.\nconst eidRaw = orch?.event_id;\nconst eidNum = toFiniteNumber(eidRaw);\nif (eidNum === null) errors.push(\"orchestrator_summary.event_id missing/invalid\");\n\n// final_state permitido o null\nconst allowedStates = [\"New\", \"Investigating\", \"Mitigating\", \"Closed\", \"FalsePositive\"];\nconst fs = orch?.final_state;\nif (!isNil(fs) && !allowedStates.includes(fs)) errors.push(\"Invalid final_state: \" + fs);\n\n// human_in_loop boolean o null\nconst hil = orch?.human_in_loop;\nif (!(typeof hil === \"boolean\" || isNil(hil))) errors.push(\"human_in_loop must be boolean|null\");\n\n// timestamps string|null\n[\"ts_ingest\",\"ts_analysis_start\",\"ts_analysis_end\",\"ts_response_start\",\"ts_response_end\"].forEach(k => {\n  const v = ms?.[k];\n  if (!isNil(v) && typeof v !== \"string\") errors.push(k + \" must be string|null\");\n});\n\n// métricas number|null (acepta strings numéricos)\nconst tta = toFiniteNumber(ms?.tta_sec);\nconst mttr = toFiniteNumber(ms?.mttr_sec);\nconst hitl = toFiniteNumber(ms?.hitl_wait_sec);\n\nif (!isNil(ms?.tta_sec) && tta === null) errors.push(\"tta_sec must be number|null\");\nif (!isNil(ms?.mttr_sec) && mttr === null) errors.push(\"mttr_sec must be number|null\");\nif (!isNil(ms?.hitl_wait_sec) && hitl === null) errors.push(\"hitl_wait_sec must be number|null\");\n\nif (errors.length) {\n  throw new Error(\"Orchestrator output verification failed: \" + errors.join(\" | \"));\n}\n\n// ------------------------------------------------------------\n// 3) MERGE final (mantiene CASE original + agrega salida validada)\n// ------------------------------------------------------------\nreturn [{\n  json: {\n    ...original,\n    orchestrator_summary: {\n      ...orch,\n      event_id: eidNum,\n    },\n    metrics_snapshot: {\n      ...ms,\n      tta_sec: isNil(ms.tta_sec) ? null : tta,\n      mttr_sec: isNil(ms.mttr_sec) ? null : mttr,\n      hitl_wait_sec: isNil(ms.hitl_wait_sec) ? null : hitl,\n    },\n    // opcional: deja trazabilidad del texto raw del LLM (útil para debug)\n    orchestrator_raw_output: typeof llmText === \"string\" ? llmText : null,\n  }\n}];\n\n"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        384,
+        208
+      ],
+      "id": "fc1d5b65-d29f-4ccc-9e9b-b9549a620d8d",
+      "name": "Verify orchestrator output"
+    },
+    {
+      "parameters": {
+        "jsCode": "// build_soc_message (TEXTO PLANO para Telegram + Chat)\n// - No usa Markdown (evita \"can't parse entities\")\n// - Usa prioritariamente orchestrator_summary + metrics_snapshot (salida validada)\n// - Fallbacks robustos a campos del CASE original\n// - Incluye señalización de guardrail (requires_approval sin decisión HITL)\n// - Limita longitud para Telegram\n\nfunction get(obj, path) {\n  try {\n    return path.split(\".\").reduce((a, k) => (a && a[k] !== undefined ? a[k] : undefined), obj);\n  } catch {\n    return undefined;\n  }\n}\n\nfunction clean(v, defVal = \"Not available\") {\n  if (v === null || v === undefined) return defVal;\n  if (typeof v === \"object\") {\n    try {\n      const s = JSON.stringify(v);\n      return s && s !== \"{}\" ? s : defVal;\n    } catch {\n      return defVal;\n    }\n  }\n  const s = String(v).replace(/\\s+/g, \" \").trim();\n  return s.length ? s : defVal;\n}\n\nfunction pick(...vals) {\n  for (const v of vals) {\n    const c = clean(v, \"\");\n    if (c !== \"\") return c;\n  }\n  return \"Not available\";\n}\n\nfunction toUtc(ts) {\n  const s = clean(ts, \"\");\n  if (!s) return \"Not available\";\n  const t = Date.parse(s);\n  if (!Number.isFinite(t)) return s;\n  return new Date(t).toISOString();\n}\n\nfunction mapSeverity(sev) {\n  const s = String(sev || \"\").toLowerCase();\n  if ([\"alta\", \"high\", \"critical\"].includes(s)) return \"Alta\";\n  if ([\"media\", \"medium\"].includes(s)) return \"Media\";\n  if ([\"baja\", \"low\", \"info\", \"informativa\"].includes(s)) return \"Baja\";\n  return clean(sev);\n}\n\nfunction shortText(text, maxLen = 220) {\n  const t = String(text || \"\").replace(/\\s+/g, \" \").trim();\n  if (!t) return \"Not available\";\n  return t.length <= maxLen ? t : t.slice(0, maxLen - 1) + \"…\";\n}\n\nfunction asCsv(v) {\n  if (Array.isArray(v)) return v.map((x) => clean(x, \"\")).filter(Boolean).join(\", \") || \"Not available\";\n  return clean(v);\n}\n\nconst d = $json ?? {};\n\n// --- Preferidos (salida del Orchestrator) ---\nconst orch = d.orchestrator_summary ?? {};\nconst ms = d.metrics_snapshot ?? {};\n\n// --- Alert base ---\nconst ruleId = pick(d.rule_id, get(d, \"raw.rule.id\"));\nconst ruleLevel = pick(d.rule_level, get(d, \"raw.rule.level\"));\nconst desc = pick(get(d, \"raw.rule.description\"), d.rule_description, d.alert_name, d.description);\n\nconst eventId = pick(d.event_id, get(orch, \"event_id\"));\nconst tsEvent = pick(d.event_timestamp, get(d, \"raw.timestamp\"), ms.ts_analysis_start, d.ts_analysis_start, d.ts_ingest);\n\nconst host = pick(d.agent_name, get(d, \"raw.agent.name\"));\nconst srcIp = pick(d.src_ip, get(d, \"raw.data.srcip\"));\nconst dstIp = pick(d.dst_ip, get(d, \"raw.data.dstip\"));\nconst user = pick(get(d, \"raw.data.dstuser\"), d.user);\n\n// --- AI fields (con fallbacks) ---\nconst label = pick(d.label_predicha, get(d, \"analysis.label_predicha\"), get(d, \"analysis.label\"));\nconst sev = mapSeverity(pick(d.severidad_predicha, get(d, \"analysis.severidad_predicha\"), get(d, \"analysis.severity\")));\nconst conf = pick(d.score_confidence, get(d, \"analysis.score_confidence\"), get(d, \"analysis.confidence\"));\nconst report = pick(d.report_text, get(d, \"analysis.report_text\"), get(d, \"analysis.justification\"), get(d, \"analysis.summary\"));\n\n// --- Risk (1–15) ---\nconst aiRisk15 = (() => {\n  const triageSev = get(d, \"triage_severity\");\n  if (triageSev !== undefined && triageSev !== null && String(triageSev).trim() !== \"\") return clean(triageSev);\n  const triageRisk = Number(get(d, \"triage_risk\"));\n  if (Number.isFinite(triageRisk)) return String(Math.max(1, Math.min(15, Math.round(triageRisk * 3))));\n  const direct = get(d, \"analysis.ai_risk_level_1_15\");\n  if (direct !== undefined && direct !== null && String(direct).trim() !== \"\") return clean(direct);\n  return \"Not available\";\n})();\n\nconst riskCompare = (() => {\n  const wl = Number(ruleLevel);\n  const ar = Number(aiRisk15);\n  if (!Number.isFinite(wl) || !Number.isFinite(ar)) return \"Not available\";\n  if (ar > wl) return `AI>${wl} (mayor que Wazuh)`;\n  if (ar < wl) return `AI<${wl} (menor que Wazuh)`;\n  return \"AI=Wazuh (igual)\";\n})();\n\n// --- MITRE (Wazuh) ---\nconst wazuhMitreId = get(d, \"raw.rule.mitre.id\");\nconst wazuhMitreTac = get(d, \"raw.rule.mitre.tactic\");\nconst wazuhMitreTec = get(d, \"raw.rule.mitre.technique\");\nconst wazuhMitre = `Tactic=${clean(wazuhMitreTac)} | Technique=${clean(wazuhMitreTec)} | Id=${asCsv(wazuhMitreId)}`;\n\n// --- MITRE (AI) ---\nconst aiTac = pick(d.mitre_tactic, get(d, \"analysis.mitre_inferred.tactic\"));\nconst aiTec = pick(d.mitre_technique, get(d, \"analysis.mitre_inferred.technique\"));\nconst aiMitre = `Tactic=${clean(aiTac)} | TechniqueId=${clean(aiTec)}`;\n\nconst mitreConsistent = (() => {\n  const waz = asCsv(wazuhMitreId);\n  const a = clean(aiTec, \"\");\n  if (!a || a === \"Not available\" || !waz || waz === \"Not available\") return \"Not available\";\n  return waz.includes(a) ? \"Consistente\" : \"Puede diferir\";\n})();\n\n// --- Guardrail visible (informativo) ---\nconst requiresApprovalRaw = pick(get(d, \"response_plan.requires_approval\"), d.requires_approval);\nconst requiresApproval = [\"true\", \"1\", \"yes\", \"si\", \"sí\"].includes(String(requiresApprovalRaw).toLowerCase());\nconst hitlDecision = pick(d.decision, get(d, \"hitl_raw.data.decision\"), d.hitl_decision);\nconst approvalNote =\n  requiresApproval && (hitlDecision === \"Not available\" || hitlDecision === \"\")\n    ? \"Aprobación requerida: PENDIENTE (no ejecutar acciones).\"\n    : requiresApproval\n      ? `Aprobación requerida: ${hitlDecision}`\n      : \"Aprobación requerida: No\";\n\n// --- Orchestrator Summary (validado) ---\nconst finalState = clean(orch.final_state);\nconst hil = orch.human_in_loop;\nconst hilText = hil === true ? \"Sí\" : hil === false ? \"No\" : \"Not available\";\nconst playbook = pick(orch.playbook, get(d, \"response_plan.playbook\"), d.playbook);\nconst outcome = pick(orch.response_outcome, d.response_outcome, d.wazuh_response);\n\n// --- Metrics Snapshot ---\nconst tta = pick(ms.tta_sec, d.tta_sec);\nconst mttr = pick(ms.mttr_sec, d.mttr_sec);\nconst hitlWait = pick(ms.hitl_wait_sec, d.hitl_wait_sec, d.hitl_wait_seconds);\n\nconst tsIngest = pick(ms.ts_ingest, d.ts_ingest);\nconst tsAStart = pick(ms.ts_analysis_start, d.ts_analysis_start);\nconst tsAEnd = pick(ms.ts_analysis_end, d.ts_analysis_end);\nconst tsRStart = pick(ms.ts_response_start, d.ts_response_start);\nconst tsREnd = pick(ms.ts_response_end, d.ts_response_end);\n\n// --- Recomendaciones (derivadas del intent/outcome/playbook si existiera) ---\nconst intent = pick(get(d, \"orchestrator_final.recommended_intent\"), get(d, \"response_options.recommended_response_intent\"), playbook, outcome);\nconst recs = (() => {\n  const i = String(intent).toLowerCase();\n  if (i.includes(\"collect\")) {\n    return [\n      \"Recolectar evidencias (auth.log/journalctl, procesos, conexiones).\",\n      \"Correlacionar intentos/usuarios/IPs y ventana de tiempo.\",\n      \"Escalar si se confirma compromiso.\"\n    ];\n  }\n  if (i.includes(\"block\")) {\n    return [\n      \"Bloquear IP origen en firewall/WAF.\",\n      \"Monitorear reintentos desde IPs relacionadas.\",\n      \"Revisar autenticaciones fallidas del host.\"\n    ];\n  }\n  if (i.includes(\"isolate\")) {\n    return [\n      \"Aislar el host afectado de la red.\",\n      \"Adquirir artefactos (procesos, red, persistencia).\",\n      \"Iniciar erradicación y recuperación.\"\n    ];\n  }\n  if (i.includes(\"reset\")) {\n    return [\n      \"Forzar reset de credenciales y habilitar MFA.\",\n      \"Revisar actividad reciente de la cuenta.\",\n      \"Buscar movimientos laterales.\"\n    ];\n  }\n  return [\n    \"Monitorear y recolectar evidencias mínimas.\",\n    \"Validar si es falso positivo vs ataque real.\",\n    \"Aplicar hardening (MFA, rate-limit, reglas).\"\n  ];\n})();\n\n// --- Mensaje final (texto plano) ---\nconst lines = [];\nlines.push(\"SOC Incident Report\");\n\nlines.push(\"\");\nlines.push(\"Orchestrator Summary:\");\nlines.push(`- Final state: ${finalState}`);\nlines.push(`- Human in loop: ${hilText}`);\nlines.push(`- Playbook: ${clean(playbook)}`);\nlines.push(`- Response outcome: ${clean(outcome)}`);\nlines.push(`- ${approvalNote}`);\n\nlines.push(\"\");\nlines.push(\"Alert:\");\nlines.push(`- Timestamp: ${toUtc(tsEvent)}`);\nlines.push(`- Event id: ${clean(eventId)}`);\nlines.push(`- Agent/Host: ${clean(host)}`);\nlines.push(`- Rule: ${clean(ruleId)} | Level: ${clean(ruleLevel)}`);\nlines.push(`- Description: ${clean(desc)}`);\n\nlines.push(\"\");\nlines.push(\"Impacted Scope:\");\nlines.push(`- Source IP: ${clean(srcIp)}`);\nlines.push(`- Destination IP: ${clean(dstIp)}`);\nlines.push(`- User: ${clean(user)}`);\n\nlines.push(\"\");\nlines.push(\"AI Assessment:\");\nlines.push(`- Risk (1–15): ${clean(aiRisk15)} | Label: ${clean(label)} | Severity: ${sev} | Confidence: ${clean(conf)}`);\nlines.push(`- Risk comparison (Wazuh vs AI): ${clean(riskCompare)}`);\nlines.push(`- Justification: ${shortText(report)}`);\n\nlines.push(\"\");\nlines.push(\"MITRE:\");\nlines.push(`- Wazuh: ${wazuhMitre}`);\nlines.push(`- AI inferred: ${aiMitre}`);\nlines.push(`- Comparison: ${mitreConsistent}`);\n\nlines.push(\"\");\nlines.push(\"Metrics Snapshot:\");\nlines.push(`- ts_ingest: ${toUtc(tsIngest)}`);\nlines.push(`- ts_analysis_start: ${toUtc(tsAStart)}`);\nlines.push(`- ts_analysis_end: ${toUtc(tsAEnd)}`);\nlines.push(`- ts_response_start: ${toUtc(tsRStart)}`);\nlines.push(`- ts_response_end: ${toUtc(tsREnd)}`);\nlines.push(`- tta_sec: ${clean(tta)}`);\nlines.push(`- mttr_sec: ${clean(mttr)}`);\nlines.push(`- hitl_wait_sec: ${clean(hitlWait)}`);\n\nlines.push(\"\");\nlines.push(\"Security Recommendations:\");\nlines.push(`1. ${recs[0]}`);\nlines.push(`2. ${recs[1]}`);\nlines.push(`3. ${recs[2]}`);\n\nlines.push(\"\");\nlines.push(`Concise Summary: Estado=${finalState}. Severidad=${sev}. Outcome=${clean(outcome)}. RuleLevel=${clean(ruleLevel)}.`);\n\n// Límite Telegram (seguro)\nlet msg = lines.join(\"\\n\");\nif (msg.length > 3500) msg = msg.slice(0, 3499) + \"…\";\n\nreturn [{ json: { ...d, telegram_text: msg, output: msg } }];\n\n"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        576,
+        208
+      ],
+      "id": "80bb7c75-002e-446f-a40f-bd336ab50db8",
+      "name": "Build soc message",
+      "alwaysOutputData": false
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "Summarizer": {
+      "main": [
+        [
+          {
+            "node": "Verify orchestrator output",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "OpenAI Chat Summarizer": {
+      "ai_languageModel": [
+        [
+          {
+            "node": "Summarizer",
+            "type": "ai_languageModel",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Input unwrap": {
+      "main": [
+        [
+          {
+            "node": "Summarizer",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Intro Summarizer": {
+      "main": [
+        [
+          {
+            "node": "Input unwrap",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Verify orchestrator output": {
+      "main": [
+        [
+          {
+            "node": "Build soc message",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build soc message": {
+      "main": [
+        []
+      ]
+    }
+  },
+  "active": true,
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "versionId": "982acb1d-a1a4-4a82-a104-9b7a486ab6a9",
+  "meta": {
+    "templateCredsSetupCompleted": true,
+    "instanceId": "5f4321b383184a4332b5d1e5cb6e70ea61441780fd28eb1fe8c95676a3e6f306"
+  },
+  "id": "gpCZgvKagyZnksc2",
+  "tags": []
+}

@@ -1,0 +1,220 @@
+{
+  "name": "Block/Unblock IP + port",
+  "nodes": [
+    {
+      "parameters": {
+        "jsCode": "const j = $json ?? {};\n\n// 1) raw desde wrappers\nlet raw = j.query ?? j.input?.query ?? j.body?.query ?? j.payload ?? j;\n\n// Helpers\nconst ipv4 =\n  '(?:(?:25[0-5]|2[0-4]\\\\d|1?\\\\d?\\\\d)\\\\.){3}(?:25[0-5]|2[0-4]\\\\d|1?\\\\d?\\\\d)';\nconst ipv4AnyRe = new RegExp(ipv4);\nconst ipv4AfterIpWordRe = new RegExp(`\\\\b(?:ip|origen|source)\\\\b\\\\s*[:=]?\\\\s*(${ipv4})`, 'i');\n\nconst portWordRe = /\\b(?:puerto|port)\\b\\s*[:=]?\\s*(\\d{1,5})\\b/i;\nconst portColonRe = /:(\\d{1,5})\\b/;\n\nconst isText = typeof raw === 'string';\n\n// 2) Si raw es string: inferir action + ip + port\nif (isText) {\n  const s = raw.trim();\n  const low = s.toLowerCase();\n\n  const action =\n    /\\b(desbloquea|unblock|allow)\\b/.test(low) ? 'unblock' :\n    /\\b(bloquea|block|deny|drop)\\b/.test(low) ? 'block' :\n    '';\n\n  // IP\n  const ipMatch = s.match(ipv4AfterIpWordRe) ?? s.match(ipv4AnyRe);\n  const ip = ipMatch ? (ipMatch[1] ?? ipMatch[0]) : null;\n\n  // PORT\n  const p1 = s.match(portWordRe);\n  const p2 = s.match(portColonRe);\n  const port = Number(p1?.[1] ?? p2?.[1] ?? NaN);\n\n  raw = { action, ip, port: Number.isFinite(port) ? port : undefined };\n}\n\n// 3) Normalizar campos esperados\nif (typeof raw !== 'object' || raw === null) {\n  throw new Error('Input unwrap: formato de entrada no soportado');\n}\n\nconst action = (raw.action ?? '').toString().trim().toLowerCase();\n\n// ✅ Detectar Wazuh (tanto “plano” como “envuelto” en event)\nconst ev = raw.event ?? null;\nconst isWazuh = !isText && (\n  // Wazuh “plano”\n  raw.rule?.id ||\n  raw.rule?.description ||\n  raw.agent?.id ||\n  raw.agent?.name ||\n  raw.manager ||\n  raw.decoder ||\n  raw.location ||\n  raw.full_log ||\n  raw.data?.srcip ||\n  raw.raw?.data?.srcip ||\n  // Wazuh “envuelto”\n  ev?.wazuh_alert_id ||\n  ev?.raw_alert ||\n  ev?.rule_id ||\n  ev?.rule_level ||\n  ev?.agent_name ||\n  ev?.label_wazuh\n);\n\n// IP desde campos típicos + wrapper event\nconst ip =\n  raw.firewall_ip ??\n  raw.ip ??\n  raw.src_ip ??\n  raw.srcip ??\n  ev?.src_ip ??\n  ev?.ip ??\n  raw.data?.srcip ??\n  raw.raw?.data?.srcip ??\n  null;\n\n// ⚠️ Puerto candidato: NO uses src_port de Wazuh (es puerto origen del atacante)\n// Solo consideramos “puerto explícito” del workflow o campos destino si existieran\nconst portCandidate =\n  raw.firewall_port ??\n  raw.port ??\n  raw.dstport ??\n  ev?.dst_port ??\n  raw.data?.dstport ??\n  raw.raw?.data?.dstport ??\n  null;\n\n// Defaults:\n// - Chat/texto: si no dicen puerto -> 8443\n// - Objeto/no-texto: si no dicen puerto -> 22\nconst defaultPort = isText ? 8443 : 22;\n\n// Normalizar puerto\nlet port = Number(portCandidate ?? defaultPort);\n\n// ✅ Regla pedida: si es Wazuh y el puerto != 22 => forzar 22\nif (isWazuh && port !== 22) port = 22;\n\n// Validaciones\nif (!['block', 'unblock'].includes(action)) {\n  throw new Error(`Input unwrap: action inválida (${action}). Debe ser block|unblock`);\n}\nif (!ip) throw new Error('Input unwrap: Missing ip/firewall_ip');\n\nif (!Number.isInteger(port) || port < 1 || port > 65535) {\n  throw new Error(`Input unwrap: Puerto inválido (${port})`);\n}\nif (![22, 8443].includes(port)) {\n  throw new Error(`Input unwrap: Puerto no permitido (${port}). Permitidos: 22|8443`);\n}\n\nreturn [{\n  json: {\n    ...raw,\n    action,\n    firewall_ip: ip,\n    firewall_port: port,\n    port, // consistente\n    is_wazuh: isWazuh,\n    // útil para debug (ver qué venía originalmente)\n    observed_port: portCandidate,\n    observed_src_port: ev?.src_port ?? raw.data?.srcport ?? raw.raw?.data?.srcport ?? null,\n  }\n}];\n\n"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -656,
+        -80
+      ],
+      "id": "01014938-f32e-4816-a91b-1da7a343c1f6",
+      "name": "Input unwrap"
+    },
+    {
+      "parameters": {
+        "rules": {
+          "values": [
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict",
+                  "version": 3
+                },
+                "conditions": [
+                  {
+                    "leftValue": "={{$json[\"action\"]}}",
+                    "rightValue": "block",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    },
+                    "id": "efb2b0f0-d703-4995-8053-10b97da2df82"
+                  }
+                ],
+                "combinator": "and"
+              }
+            },
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict",
+                  "version": 3
+                },
+                "conditions": [
+                  {
+                    "id": "ef035995-fa24-40ef-a8f6-0258e0670297",
+                    "leftValue": "={{$json[\"action\"]}}",
+                    "rightValue": "unblock",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals",
+                      "name": "filter.operator.equals"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              }
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.switch",
+      "typeVersion": 3.4,
+      "position": [
+        -496,
+        -80
+      ],
+      "id": "da4be958-ac48-4294-9c8b-d5238795bdfa",
+      "name": "Switch"
+    },
+    {
+      "parameters": {
+        "inputSource": "passthrough"
+      },
+      "type": "n8n-nodes-base.executeWorkflowTrigger",
+      "typeVersion": 1.1,
+      "position": [
+        -864,
+        -80
+      ],
+      "id": "1257a751-338f-4183-82a9-8c4a3de44abb",
+      "name": "Intro Block/Unblock",
+      "alwaysOutputData": true
+    },
+    {
+      "parameters": {
+        "jsCode": "const ssh = $json ?? {};\n\n// Recupera el evento original (antes del SSH)\nconst base =\n  ($items(\"Switch\")?.[0]?.json) ??\n  ($items(\"Input unwrap\")?.[0]?.json) ??\n  {};\n\nconst action = base.action ?? \"\";\nconst ip = base.firewall_ip ?? base.ip ?? null;\nconst port = base.firewall_port ?? base.port ?? null;\n\nif (!action) throw new Error(\"Missing action (block|unblock)\");\nif (!ip) throw new Error(\"Missing firewall_ip\");\n\n// En n8n SSH: suele venir como `code`\nconst exitCode = ssh.exitCode ?? ssh.code ?? null;\nconst ok = (exitCode === 0);\n\n// Clasificar stderr\nconst stderr = (ssh.stderr ?? \"\").toString();\nconst warnings = [];\nconst errors = [];\n\nif (stderr.trim()) {\n  for (const line of stderr.split(\"\\n\")) {\n    if (/warning:\\s+commands will be executed using \\/bin\\/sh/i.test(line)) warnings.push(line);\n    else if (line.trim()) errors.push(line);\n  }\n}\n\nreturn [{\n  json: {\n    ...base,\n    ssh: { ...ssh, exitCode },\n    execution: {\n      tool: \"UFW Block / Unblock IP + Port\",\n      action,\n      firewall_ip: ip,\n      firewall_port: port,\n      status: ok ? \"ok\" : \"error\",\n      exit_code: exitCode,\n      stdout: ssh.stdout ?? \"\",\n      stderr: ssh.stderr ?? \"\",\n      warnings,\n      errors,\n    }\n  }\n}];\n\n"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -64,
+        -80
+      ],
+      "id": "1d521fde-0f1a-409f-994b-c474dc899e59",
+      "name": "Block/Unblock Response"
+    },
+    {
+      "parameters": {
+        "command": "=set -euo pipefail\n\nPASS=\"H10er\"\nIP=\"{{ $json.firewall_ip || $json.ip }}\"\nPORT=\"{{ $json.firewall_port || $json.port }}\"\nDURATION_MIN=\"{{ $json.duration_min || 2 }}\"\n\n# Validación IPv4 estricta (evita inyección)\necho \"$IP\" | grep -Eq '^((25[0-5]|2[0-4][0-9]|1?[0-9]{1,2})\\.){3}(25[0-5]|2[0-4][0-9]|1?[0-9]{1,2})$' \\\n  || { echo \"Invalid IP: $IP\"; exit 1; }\n\n# Validación puerto: solo 22 o 8443 (ajusta si quieres más)\necho \"$PORT\" | grep -Eq '^(22|8443)$' \\\n  || { echo \"Invalid PORT (allowed 22|8443): $PORT\"; exit 1; }\n\n# 1) Bloquear\necho \"$PASS\" | sudo -S -p '' /usr/sbin/ufw insert 1 deny from \"$IP\" to any port \"$PORT\" proto tcp\n\n# 2) Programar desbloqueo automático (se ejecuta en el host remoto)\n#    Usamos --force para evitar prompts.\nprintf '%s\\n%s\\n' \"$PASS\" \"/usr/sbin/ufw --force delete deny from $IP to any port $PORT proto tcp\" \\\n  | sudo -S -p '' /usr/bin/at now + ${DURATION_MIN} minutes\n\n# 3) Mostrar reglas (debug)\necho \"$PASS\" | sudo -S -p '' /usr/sbin/ufw status numbered | sed -n '1,40p'\n"
+      },
+      "type": "n8n-nodes-base.ssh",
+      "typeVersion": 1,
+      "position": [
+        -272,
+        -192
+      ],
+      "id": "047b52ef-7e9b-42c9-bc3b-7a6a524b6902",
+      "name": "Block IP",
+      "credentials": {
+        "sshPassword": {
+          "id": "WfxYtD5LaSa8Rxlx",
+          "name": "Ubuntu UFW"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "command": "=set -euo pipefail\n\nPASS=\"H10er\"\nIP=\"{{ $json.firewall_ip || $json.ip }}\"\nPORT=\"{{ $json.firewall_port || $json.port || 8443 }}\"\n\necho \"$IP\" | grep -Eq '^((25[0-5]|2[0-4][0-9]|1?[0-9]{1,2})\\.){3}(25[0-5]|2[0-4][0-9]|1?[0-9]{1,2})$' \\\n  || { echo \"Invalid IP: $IP\"; exit 1; }\n\necho \"$PORT\" | grep -Eq '^(22|8443)$' \\\n  || { echo \"Invalid PORT (allowed 22|8443): $PORT\"; exit 1; }\n\n# --force evita confirmaciones\necho \"$PASS\" | sudo -S -p '' /usr/sbin/ufw --force delete deny from \"$IP\" to any port \"$PORT\" proto tcp\n\necho \"$PASS\" | sudo -S -p '' /usr/sbin/ufw status numbered | sed -n '1,40p'\n"
+      },
+      "type": "n8n-nodes-base.ssh",
+      "typeVersion": 1,
+      "position": [
+        -272,
+        32
+      ],
+      "id": "0d7f4526-c721-4806-9328-7205f6c710cb",
+      "name": "Unblock IP",
+      "credentials": {
+        "sshPassword": {
+          "id": "WfxYtD5LaSa8Rxlx",
+          "name": "Ubuntu UFW"
+        }
+      }
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "Input unwrap": {
+      "main": [
+        [
+          {
+            "node": "Switch",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Switch": {
+      "main": [
+        [
+          {
+            "node": "Block IP",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Unblock IP",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Intro Block/Unblock": {
+      "main": [
+        [
+          {
+            "node": "Input unwrap",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Block IP": {
+      "main": [
+        [
+          {
+            "node": "Block/Unblock Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Unblock IP": {
+      "main": [
+        [
+          {
+            "node": "Block/Unblock Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": true,
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "versionId": "ec76e4e8-0f69-43f9-8842-d214c28e2ea3",
+  "meta": {
+    "instanceId": "5f4321b383184a4332b5d1e5cb6e70ea61441780fd28eb1fe8c95676a3e6f306"
+  },
+  "id": "zYNEc0lGp4cw2wJ5",
+  "tags": []
+}

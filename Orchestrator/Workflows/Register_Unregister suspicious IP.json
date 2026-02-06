@@ -1,0 +1,219 @@
+{
+  "name": "Register/Unregister suspicious IP",
+  "nodes": [
+    {
+      "parameters": {
+        "jsCode": "let j = $json ?? {};\nlet merged = { ...j };\n\nconst ipv4 =\n  /^(25[0-5]|2[0-4]\\d|1?\\d?\\d)(\\.(25[0-5]|2[0-4]\\d|1?\\d?\\d)){3}$/;\n\nfunction setIfMissing(obj, k, v) {\n  if (v === undefined || v === null) return;\n  if (obj[k] === undefined || obj[k] === null || obj[k] === \"\") obj[k] = v;\n}\n\nfunction parseQueryString(qs) {\n  const out = {};\n  const s = String(qs ?? \"\").trim().replace(/^\\?/, \"\");\n  if (!s) return out;\n\n  for (const part of s.split(\"&\")) {\n    if (!part) continue;\n    const idx = part.indexOf(\"=\");\n    let k, v;\n    if (idx >= 0) {\n      k = part.slice(0, idx).trim();\n      v = part.slice(idx + 1).trim();\n    } else {\n      // permite formato: \"unregister, ip=1.2.3.4\" o \"ip:1.2.3.4\"\n      k = part.trim();\n      v = \"\";\n    }\n    if (!k) continue;\n    try {\n      k = decodeURIComponent(k);\n      v = decodeURIComponent(v);\n    } catch (e) {}\n    out[k] = v;\n  }\n  return out;\n}\n\nif (typeof merged.query === \"string\") {\n  const s = merged.query.trim();\n\n  // 1) JSON string válido\n  if (s.startsWith(\"{\") && s.endsWith(\"}\")) {\n    try {\n      const parsed = JSON.parse(s);\n      if (parsed && typeof parsed === \"object\" && !Array.isArray(parsed)) {\n        merged = { ...parsed, ...merged };\n      }\n    } catch (e) {\n      // 1b) JSON no válido tipo: {action:unregister,ip:1.2.3.4}\n      const mAction = s.match(/\\baction\\s*[:=]\\s*\"?([a-zA-Z_-]+)\"?/i);\n      const mIp = s.match(/\\bip\\s*[:=]\\s*\"?((?:\\d{1,3}\\.){3}\\d{1,3})\"?/i);\n      if (mAction) setIfMissing(merged, \"action\", mAction[1]);\n      if (mIp) setIfMissing(merged, \"ip\", mIp[1]);\n    }\n  }\n  // 2) Querystring: action=unregister&ip=1.2.3.4\n  else if (s.includes(\"=\") && s.includes(\"&\")) {\n    const params = parseQueryString(s);\n    for (const [k, v] of Object.entries(params)) {\n      setIfMissing(merged, k, v);\n    }\n  }\n  // 2b) Formato mixto: \"unregister, ip=1.2.3.4\" o \"unregister,ip=...\"\n  else if (s.includes(\"ip=\") || s.includes(\"action=\") || s.includes(\"ip:\") || s.includes(\"action:\")) {\n    // normaliza separadores a \"&\"\n    const normalized = s.replace(/[,;\\s]+/g, \"&\").replace(/:/g, \"=\");\n    const params = parseQueryString(normalized);\n    for (const [k, v] of Object.entries(params)) {\n      setIfMissing(merged, k, v);\n    }\n    // si no venía \"action=...\", intenta capturar palabra suelta unregister/register\n    const mAction = s.match(/\\b(register|unregister|add|insert|create|remove|delete|del)\\b/i);\n    if (mAction) setIfMissing(merged, \"action\", mAction[1]);\n  }\n  // 3) IP sola\n  else if (ipv4.test(s)) {\n    setIfMissing(merged, \"ip\", s);\n  }\n  // 4) Texto suelto: extrae ip + acción\n  else {\n    const mIp = s.match(/((?:\\d{1,3}\\.){3}\\d{1,3})/);\n    const mAction = s.match(/\\b(register|unregister|add|insert|create|remove|delete|del)\\b/i);\n    if (mIp) setIfMissing(merged, \"ip\", mIp[1]);\n    if (mAction) setIfMissing(merged, \"action\", mAction[1]);\n  }\n}\n\n// Normalizar IP (prioridad)\nlet ip =\n  merged.ip ??\n  merged.firewall_ip ??\n  merged.src_ip ??\n  merged.raw?.data?.srcip ??\n  null;\n\nip = String(ip ?? \"\").trim();\n\n// Normalizar action + aliases\nlet action = String(merged.action ?? \"register\").trim().toLowerCase();\nif ([\"add\", \"insert\", \"create\"].includes(action)) action = \"register\";\nif ([\"remove\", \"delete\", \"del\", \"unregister\"].includes(action)) action = \"unregister\";\n\n// Validaciones\nif (!ipv4.test(ip)) throw new Error(`Input unwrap: IP inválida: ${ip}`);\nif (![\"register\", \"unregister\"].includes(action)) {\n  throw new Error(`Input unwrap: action inválida (${action}). Usa register|unregister`);\n}\n\nreturn [{\n  json: {\n    ...merged,\n    action,\n    ip,\n    firewall_ip: ip,\n  }\n}];\n\n"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -368,
+        0
+      ],
+      "id": "c0d9ad3b-3203-4bb8-949f-efe63c5fdecb",
+      "name": "Input unwrap"
+    },
+    {
+      "parameters": {
+        "jsCode": "const j = $json ?? {};\n\nconst stdout = (j.stdout ?? \"\").toString().trim();\nconst stderr = (j.stderr ?? \"\").toString().trim();\nconst code = j.code ?? j.exitCode ?? j.exit_code ?? null;\n\nconst action = j.action ?? null;\nconst ip = j.ip ?? j.firewall_ip ?? j.query ?? null;\n\n// clasificar resultado según stdout\nlet status = \"unknown\";\nif (stdout.startsWith(\"added:\")) status = \"added\";\nelse if (stdout.startsWith(\"exists:\")) status = \"exists\";\nelse if (stdout.startsWith(\"removed:\")) status = \"removed\";\nelse if (stdout.startsWith(\"not_found:\")) status = \"not_found\";\nelse if (stdout === \"no_src_ip\") status = \"no_src_ip\";\nelse if (stdout === \"file_missing\") status = \"file_missing\";\n\nconst ok = (code === 0 || code === null) && !stderr;\n\nreturn [{\n  json: {\n    ...j,\n    action,\n    ip,\n    result: {\n      ok,\n      status,\n      code,\n      stdout,\n      stderr,\n    }\n  }\n}];\n"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        192,
+        -16
+      ],
+      "id": "ca71ea63-970d-49e4-9915-48c4603f7e68",
+      "name": "Output"
+    },
+    {
+      "parameters": {
+        "inputSource": "passthrough"
+      },
+      "type": "n8n-nodes-base.executeWorkflowTrigger",
+      "typeVersion": 1.1,
+      "position": [
+        -528,
+        0
+      ],
+      "id": "8855c1bf-ff4a-4cd6-af94-93375838f9db",
+      "name": "Intro Register Ip"
+    },
+    {
+      "parameters": {
+        "rules": {
+          "values": [
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict",
+                  "version": 3
+                },
+                "conditions": [
+                  {
+                    "leftValue": "={{$json.action}}",
+                    "rightValue": "register",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    },
+                    "id": "f40e1889-6116-498d-aa93-ed4bcf3de9a4"
+                  }
+                ],
+                "combinator": "and"
+              }
+            },
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict",
+                  "version": 3
+                },
+                "conditions": [
+                  {
+                    "id": "59c651f5-1c8a-474e-b7a3-667687a5ac1d",
+                    "leftValue": "={{$json.action}}",
+                    "rightValue": "unregister",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              }
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.switch",
+      "typeVersion": 3.4,
+      "position": [
+        -224,
+        0
+      ],
+      "id": "34babef7-1961-494e-a8a6-961feb3b2320",
+      "name": "Switch"
+    },
+    {
+      "parameters": {
+        "command": "=bash -lc '\nIP=\"{{ $json.ip }}\"\nFILE=\"/var/ossec/etc/lists/malicious-ioc/malicious-ip\"\n\nif [ -z \"$IP\" ]; then echo \"no_src_ip\"; exit 1; fi\nif ! [[ \"$IP\" =~ ^([0-9]{1,3}\\.){3}[0-9]{1,3}$ ]]; then echo \"invalid_ip:$IP\"; exit 1; fi\n\nif [ ! -f \"$FILE\" ]; then\n  echo \"file_missing\"\n  exit 0\nfi\n\nIP_ESC=\"${IP//./\\\\.}\"\n\nif grep -qE \"^${IP_ESC}:\" \"$FILE\"; then\n  cp -a \"$FILE\" \"$FILE.bak.$(date +%F_%H%M%S)\"\n  sed -i -E \"/^${IP_ESC}:/d\" \"$FILE\"\n  echo \"removed:${IP}\"\nelse\n  echo \"not_found:${IP}\"\nfi\n'\n"
+      },
+      "type": "n8n-nodes-base.ssh",
+      "typeVersion": 1,
+      "position": [
+        -32,
+        112
+      ],
+      "id": "831409b8-98a3-41fc-8913-69a02aa62d75",
+      "name": "Unregister Suspicious IP",
+      "credentials": {
+        "sshPassword": {
+          "id": "8gT6oEOltViyISN3",
+          "name": "SSH Wazuh/Ubuntu"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "command": "=bash -lc '\nIP=\"{{ $json.ip }}\"\nFILE=\"/var/ossec/etc/lists/malicious-ioc/malicious-ip\"\n\nif [ -z \"$IP\" ]; then echo \"no_src_ip\"; exit 1; fi\nif ! [[ \"$IP\" =~ ^([0-9]{1,3}\\.){3}[0-9]{1,3}$ ]]; then echo \"invalid_ip:$IP\"; exit 1; fi\n\nsudo touch \"$FILE\"\nsudo chown wazuh:wazuh \"$FILE\"\nsudo chmod 660 \"$FILE\"\n\nIP_ESC=\"${IP//./\\\\.}\"\nif ! sudo grep -qE \"^${IP_ESC}:\" \"$FILE\"; then\n  echo \"${IP}:True\" | sudo tee -a \"$FILE\" >/dev/null\n  echo \"added:${IP}\"\nelse\n  echo \"exists:${IP}\"\nfi\n'\n"
+      },
+      "type": "n8n-nodes-base.ssh",
+      "typeVersion": 1,
+      "position": [
+        -32,
+        -128
+      ],
+      "id": "09acee8c-85c4-4dfd-b45e-533e1869dd16",
+      "name": "Register Suspicious IP",
+      "credentials": {
+        "sshPassword": {
+          "id": "8gT6oEOltViyISN3",
+          "name": "SSH Wazuh/Ubuntu"
+        }
+      }
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "Input unwrap": {
+      "main": [
+        [
+          {
+            "node": "Switch",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Intro Register Ip": {
+      "main": [
+        [
+          {
+            "node": "Input unwrap",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Switch": {
+      "main": [
+        [
+          {
+            "node": "Register Suspicious IP",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Unregister Suspicious IP",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Unregister Suspicious IP": {
+      "main": [
+        [
+          {
+            "node": "Output",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Register Suspicious IP": {
+      "main": [
+        [
+          {
+            "node": "Output",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": true,
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "versionId": "eef953d1-2dfa-454a-9d74-1f787443b753",
+  "meta": {
+    "templateCredsSetupCompleted": true,
+    "instanceId": "5f4321b383184a4332b5d1e5cb6e70ea61441780fd28eb1fe8c95676a3e6f306"
+  },
+  "id": "kiZGMchZRla6vwQY",
+  "tags": []
+}

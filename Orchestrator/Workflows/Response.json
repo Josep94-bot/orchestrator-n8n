@@ -1,0 +1,228 @@
+{
+  "name": "Response",
+  "nodes": [
+    {
+      "parameters": {
+        "jsCode": "// Return final plan\n// Devuelve exactamente 1 item (el evento completo + response_plan)\nconst items = $input.all();\nreturn items.length ? [{ json: items[0].json }] : [{ json: {} }];\n"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        544,
+        -80
+      ],
+      "id": "43a40d5a-9b57-40d9-97fe-8d9f484efb22",
+      "name": "Return final plan"
+    },
+    {
+      "parameters": {
+        "promptType": "define",
+        "text": "You are the SOC Response Planning agent.\n\nYou will receive ONE event as JSON.\n\nHARD RULES (NO HALLUCINATIONS):\n- Do NOT invent IPs, hostnames, timestamps, rule IDs/levels, event_id, agent_name.\n- Use ONLY values present in the EVENT JSON.\n- You MAY use src_ip if present OR if src_ip was normalized from user input into root src_ip (already present in JSON).\n- Return JSON only (one object). No markdown. No extra text.\n\nIMPORTANT INPUTS:\n- src_ip may exist in root.\n- requested_action may exist in root (e.g., \"block\", \"notify\", \"malicious_ip\").\n\nEVENT JSON:\n{{ $json.event_json_str }}\n\nTASK:\nReturn EXACTLY this shape:\n\n{\n  \"response_plan\": {\n    \"requires_approval\": true|false,\n    \"selected_option\": \"A\"|\"B\"|\"C\",\n    \"playbook\": \"PB_NOTIFY_ONLY\"|\"PB_MALICIOUS_IP\"|\"PB_BLOCK_IP\",\n    \"actions\": [\n      { \"type\": \"notify\"|\"wazuh_malicious_ip\"|\"wazuh_firewall_drop\", \"params\": {} }\n    ],\n    \"message_for_hitl\": \"\",\n    \"options\": {\n      \"A\": { \"playbook\": \"\", \"actions\": [], \"why\": \"\" },\n      \"B\": { \"playbook\": \"\", \"actions\": [], \"why\": \"\" },\n      \"C\": { \"playbook\": \"\", \"actions\": [], \"why\": \"\" }\n    }\n  }\n}\n\nOption A (always include):\n- playbook=\"PB_NOTIFY_ONLY\"\n- actions=[{\"type\":\"notify\",\"params\":{\"message\":\"<Spanish, short: include rule_id/rule_level, agent_name, and what to verify>\"}}]\n- why: Spanish, 1 sentence\n\nOption B (malicious IP catalog):\n- ONLY if src_ip exists (not null/empty)\n- playbook=\"PB_MALICIOUS_IP\"\n- actions=[\n  {\"type\":\"wazuh_malicious_ip\",\"params\":{\"ip\":\"<src_ip>\"}},\n  {\"type\":\"notify\",\"params\":{\"message\":\"<Spanish: IP agregada a lista maliciosa; pedir confirmación/seguimiento>\"}}\n]\n- why: Spanish, 1 sentence\n- requires_approval: false\n\nOption C (containment):\n- ONLY if src_ip exists AND (\n    requested_action == \"block\"\n    OR label_wazuh == \"malicious\"\n    OR monitoring_classification == \"malicious\"\n    OR rule_level >= 12\n  )\n- playbook=\"PB_BLOCK_IP\"\n- actions=[{\"type\":\"wazuh_firewall_drop\",\"params\":{\"ip\":\"<src_ip>\"}}]\n- why: Spanish, 1 sentence\n- requires_approval MUST be true when selected_option=\"C\"\n\nSELECTION LOGIC:\n1) If src_ip missing => selected_option=\"A\"\n2) Else if requested_action==\"block\" => selected_option=\"C\" (requires_approval=true)\n3) Else choose \"C\" only if Option C criteria met\n4) Else choose \"B\" when (label_wazuh==\"malicious\" OR monitoring_classification in [\"suspicious\",\"malicious\"] OR rule_level>=8 OR triage_severity>=8)\n5) Else choose \"A\"\n\nmessage_for_hitl (Spanish, short):\n- Must mention: rule_id, rule_level, triage_priority, agent_name, src_ip (or explain missing src_ip).\n- Must explain why selected_option was chosen and what confirmation is needed.\n\n",
+        "options": {
+          "maxIterations": 3,
+          "returnIntermediateSteps": true
+        }
+      },
+      "type": "@n8n/n8n-nodes-langchain.agent",
+      "typeVersion": 3,
+      "position": [
+        -224,
+        -64
+      ],
+      "id": "82e6730e-18d5-4bf5-bc78-b26914184267",
+      "name": "Response",
+      "alwaysOutputData": true,
+      "onError": "continueErrorOutput"
+    },
+    {
+      "parameters": {
+        "description": "You are the SOC Response Planning agent.\n\nYou will receive ONE event as JSON.\n\nHARD RULES (NO HALLUCINATIONS):\n- Do NOT invent IPs, hostnames, timestamps, rule IDs/levels, event_id, agent_name.\n- Use ONLY values present in the EVENT JSON.\n- You MAY use src_ip if present OR if src_ip was normalized from user input into root src_ip (already present in JSON).\n- Return JSON only (one object). No markdown. No extra text.\n\nIMPORTANT INPUTS:\n- src_ip may exist in root.\n- requested_action may exist in root (e.g., \"block\", \"notify\", \"malicious_ip\").\n\nEVENT JSON:\n{{ $json.event_json_str }}\n\nTASK:\nReturn EXACTLY this shape:\n\n{\n  \"response_plan\": {\n    \"requires_approval\": true|false,\n    \"selected_option\": \"A\"|\"B\"|\"C\",\n    \"playbook\": \"PB_NOTIFY_ONLY\"|\"PB_MALICIOUS_IP\"|\"PB_BLOCK_IP\",\n    \"actions\": [\n      { \"type\": \"notify\"|\"wazuh_malicious_ip\"|\"wazuh_firewall_drop\", \"params\": {} }\n    ],\n    \"message_for_hitl\": \"\",\n    \"options\": {\n      \"A\": { \"playbook\": \"\", \"actions\": [], \"why\": \"\" },\n      \"B\": { \"playbook\": \"\", \"actions\": [], \"why\": \"\" },\n      \"C\": { \"playbook\": \"\", \"actions\": [], \"why\": \"\" }\n    }\n  }\n}\n\nOption A (always include):\n- playbook=\"PB_NOTIFY_ONLY\"\n- actions=[{\"type\":\"notify\",\"params\":{\"message\":\"<Spanish, short: include rule_id/rule_level, agent_name, and what to verify>\"}}]\n- why: Spanish, 1 sentence\n\nOption B (malicious IP catalog):\n- ONLY if src_ip exists (not null/empty)\n- playbook=\"PB_MALICIOUS_IP\"\n- actions=[\n  {\"type\":\"wazuh_malicious_ip\",\"params\":{\"ip\":\"<src_ip>\"}},\n  {\"type\":\"notify\",\"params\":{\"message\":\"<Spanish: IP agregada a lista maliciosa; pedir confirmación/seguimiento>\"}}\n]\n- why: Spanish, 1 sentence\n- requires_approval: false\n\nOption C (containment):\n- ONLY if src_ip exists AND (\n    requested_action == \"block\"\n    OR label_wazuh == \"malicious\"\n    OR monitoring_classification == \"malicious\"\n    OR rule_level >= 12\n  )\n- playbook=\"PB_BLOCK_IP\"\n- actions=[{\"type\":\"wazuh_firewall_drop\",\"params\":{\"ip\":\"<src_ip>\"}}]\n- why: Spanish, 1 sentence\n- requires_approval MUST be true when selected_option=\"C\"\n\nSELECTION LOGIC:\n1) If src_ip missing => selected_option=\"A\"\n2) Else if requested_action==\"block\" => selected_option=\"C\" (requires_approval=true)\n3) Else choose \"C\" only if Option C criteria met\n4) Else choose \"B\" when (label_wazuh==\"malicious\" OR monitoring_classification in [\"suspicious\",\"malicious\"] OR rule_level>=8 OR triage_severity>=8)\n5) Else choose \"A\"\n\nmessage_for_hitl (Spanish, short):\n- Must mention: rule_id, rule_level, triage_priority, agent_name, src_ip (or explain missing src_ip).\n- Must explain why selected_option was chosen and what confirmation is needed.\n\n"
+      },
+      "type": "@n8n/n8n-nodes-langchain.toolThink",
+      "typeVersion": 1.1,
+      "position": [
+        -16,
+        128
+      ],
+      "id": "fc693137-2eaf-45c8-972d-24861a08d69a",
+      "name": "Think"
+    },
+    {
+      "parameters": {
+        "model": {
+          "__rl": true,
+          "value": "gpt-3.5-turbo",
+          "mode": "list",
+          "cachedResultName": "gpt-3.5-turbo"
+        },
+        "builtInTools": {},
+        "options": {
+          "temperature": 0,
+          "maxRetries": 2
+        }
+      },
+      "type": "@n8n/n8n-nodes-langchain.lmChatOpenAi",
+      "typeVersion": 1.3,
+      "position": [
+        -272,
+        128
+      ],
+      "id": "abfd7316-c893-48bf-a792-35ad8c253cc7",
+      "name": "OpenAI Chat Response",
+      "credentials": {
+        "openAiApi": {
+          "id": "yt3NGZbVrbZuYATf",
+          "name": "OpenAi account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "// Merge plan onto event (robusto + normalización de tipos)\n// - Preserva el evento original del trigger\n// - Parseo seguro del output del agente (si viene como string JSON, incluso con fences)\n// - Normaliza response_plan.requires_approval a boolean REAL\n// - Garantiza que response_plan exista como objeto si el agente lo entregó\n// - Mantiene trazas mínimas\n\nconst original =\n  $items(\"Intro Response\")?.[0]?.json ?? $json ?? {};\n\nconst agentOut = $json ?? {};\n\n// -------- helpers ----------\nfunction stripFences(s) {\n  if (typeof s !== \"string\") return s;\n  return s\n    .replace(/```json\\s*([\\s\\S]*?)\\s*```/gi, \"$1\")\n    .replace(/```\\s*([\\s\\S]*?)\\s*```/g, \"$1\")\n    .trim();\n}\n\nfunction safeParse(maybe) {\n  if (maybe == null) return null;\n  if (typeof maybe === \"object\") return maybe;\n  if (typeof maybe !== \"string\") return null;\n\n  const s0 = stripFences(maybe);\n  if (!s0) return null;\n\n  // intento directo\n  try { return JSON.parse(s0); } catch {}\n\n  // intento: extraer {...} o [...]\n  const fo = s0.indexOf(\"{\");\n  const lo = s0.lastIndexOf(\"}\");\n  if (fo !== -1 && lo !== -1 && lo > fo) {\n    try { return JSON.parse(s0.slice(fo, lo + 1)); } catch {}\n  }\n\n  const fa = s0.indexOf(\"[\");\n  const la = s0.lastIndexOf(\"]\");\n  if (fa !== -1 && la !== -1 && la > fa) {\n    try { return JSON.parse(s0.slice(fa, la + 1)); } catch {}\n  }\n\n  return null;\n}\n\nfunction toBool(v, defaultValue = false) {\n  if (v === true || v === false) return v;\n  if (v === 1 || v === 0) return Boolean(v);\n  if (typeof v === \"string\") {\n    const s = v.trim().toLowerCase();\n    if ([\"true\",\"1\",\"yes\",\"y\",\"si\",\"sí\"].includes(s)) return true;\n    if ([\"false\",\"0\",\"no\",\"n\"].includes(s)) return false;\n  }\n  return defaultValue;\n}\n// ---------------------------\n\n// 1) parse output si viene como string\nconst parsedOut = safeParse(agentOut.output);\n\n// 2) obtener response_plan desde varias rutas posibles\nlet responsePlan =\n  agentOut.response_plan ??\n  parsedOut?.response_plan ??\n  agentOut?.output?.response_plan ??\n  null;\n\n// 3) si responsePlan viene como string, intentar parsearlo\nif (typeof responsePlan === \"string\") {\n  const parsedRp = safeParse(responsePlan);\n  responsePlan = parsedRp && typeof parsedRp === \"object\" ? parsedRp : null;\n}\n\n// 4) Normalizar contrato del response_plan\nif (responsePlan && typeof responsePlan === \"object\" && !Array.isArray(responsePlan)) {\n  // requires_approval SIEMPRE boolean\n  responsePlan.requires_approval = toBool(\n    responsePlan.requires_approval,\n    // default: si elige C, requiere aprobación, si no, false\n    responsePlan.selected_option === \"C\"\n  );\n\n  // hard rule extra: si selected_option es C => true\n  if (responsePlan.selected_option === \"C\") {\n    responsePlan.requires_approval = true;\n  }\n\n  // si NO hay selected_option, default A (no rompe)\n  if (!responsePlan.selected_option) responsePlan.selected_option = \"A\";\n}\n\n// 5) salida final\nreturn [{\n  json: {\n    ...original,\n    ...(responsePlan ? { response_plan: responsePlan } : {}),\n    plan_generated: !!responsePlan,\n    plan_source: responsePlan ? \"ResponsePlanningAgent\" : \"none\",\n    // auditoría\n    response_plan_raw: typeof agentOut.output === \"string\" ? agentOut.output : undefined,\n  }\n}];\n"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        160,
+        -80
+      ],
+      "id": "4a11aaf2-6322-44f6-9a56-095055db6eb7",
+      "name": "Merge plan onto event"
+    },
+    {
+      "parameters": {
+        "inputSource": "passthrough"
+      },
+      "type": "n8n-nodes-base.executeWorkflowTrigger",
+      "typeVersion": 1.1,
+      "position": [
+        -592,
+        -64
+      ],
+      "id": "bb05029f-f54a-4d46-a666-175348c3b4cf",
+      "name": "Intro Response",
+      "alwaysOutputData": true
+    },
+    {
+      "parameters": {
+        "jsCode": "// Build event json_str (fix mínimo)\n// - Parsea query string\n// - Promueve ip -> src_ip (en raíz)\n// - Promueve action -> requested_action (en raíz)\n// - Genera event_json_str con el objeto ya normalizado\n\nfunction safeParse(x) {\n  if (x == null) return null;\n  if (typeof x === 'object') return x;\n  if (typeof x !== 'string') return null;\n  try { return JSON.parse(x); } catch { return null; }\n}\n\nconst incoming = $json ?? {};\nconst q = safeParse(incoming.query) ?? incoming.query ?? {};\nconst ip = q?.ip ?? q?.src_ip ?? null;\nconst action = q?.action ?? null;\n\nconst event = {\n  ...incoming,\n  query: q, // conserva query como objeto\n  src_ip: incoming.src_ip ?? ip, // <-- CLAVE\n  requested_action: incoming.requested_action ?? action, // <-- CLAVE\n};\n\nreturn [{\n  json: {\n    ...incoming,\n    event_json_str: JSON.stringify(event),\n  }\n}];\n"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -400,
+        -64
+      ],
+      "id": "27102465-301c-4266-86a0-7ec571f1c025",
+      "name": "Build event json_str"
+    },
+    {
+      "parameters": {
+        "jsCode": "// validate_response_plan (crítico)\n// - Fuerza contrato response_plan\n// - Anti-alucinación: NO permite acciones basadas en IP si src_ip falta\n// - Normaliza selected_option / playbook / requires_approval\n// - Sanea actions\n// - Asegura options y message_for_hitl mínimos\n//\n// ENTRADA ESPERADA: evento original + response_plan (salida de \"Merge plan onto event\")\n\nfunction isMissing(v) {\n  return (\n    v === null ||\n    v === undefined ||\n    (typeof v === \"string\" && [\"\", \"null\", \"undefined\", \"not available\", \"n/a\"].includes(v.trim().toLowerCase()))\n  );\n}\n\nfunction toBool(v, defaultValue = false) {\n  if (v === true || v === false) return v;\n  if (v === 1 || v === 0) return Boolean(v);\n  if (typeof v === \"string\") {\n    const s = v.trim().toLowerCase();\n    if ([\"true\", \"1\", \"yes\", \"y\", \"si\", \"sí\"].includes(s)) return true;\n    if ([\"false\", \"0\", \"no\", \"n\"].includes(s)) return false;\n  }\n  return defaultValue;\n}\n\nfunction safeStr(v, fallback = \"\") {\n  if (v === null || v === undefined) return fallback;\n  return String(v);\n}\n\nfunction makeNotify(msg) {\n  return {\n    type: \"notify\",\n    params: { message: msg },\n  };\n}\n\nconst ev = $json ?? {};\nconst srcIp = ev.src_ip;\n\nlet rp = ev.response_plan;\n\n// Si no hay response_plan, fabricar uno seguro (A) para no romper pipeline\nif (!rp || typeof rp !== \"object\" || Array.isArray(rp)) {\n  const ruleId = safeStr(ev.rule_id, \"N/D\");\n  const ruleLevel = safeStr(ev.rule_level, \"N/D\");\n  const agentName = safeStr(ev.agent_name, \"N/D\");\n  rp = {\n    requires_approval: false,\n    selected_option: \"A\",\n    playbook: \"PB_NOTIFY_ONLY\",\n    actions: [\n      makeNotify(\n        `Verificar alerta (rule_id ${ruleId}, nivel ${ruleLevel}) en agente ${agentName}. No hay plan válido generado.`\n      ),\n    ],\n    message_for_hitl: `No se generó un plan válido. Verificar alerta (rule_id ${ruleId}, nivel ${ruleLevel}) en agente ${agentName}. src_ip: ${isMissing(srcIp) ? \"No disponible\" : srcIp}.`,\n    options: {\n      A: { playbook: \"PB_NOTIFY_ONLY\", actions: [], why: \"Plan seguro por defecto ante salida inválida.\" },\n      B: { playbook: \"PB_MALICIOUS_IP\", actions: [], why: \"Requiere src_ip para operar.\" },\n      C: { playbook: \"PB_BLOCK_IP\", actions: [], why: \"Requiere src_ip y criterio fuerte.\", requires_approval: true },\n    },\n  };\n}\n\n// Normalizar selected_option\nconst allowedOptions = new Set([\"A\", \"B\", \"C\"]);\nif (!allowedOptions.has(rp.selected_option)) rp.selected_option = \"A\";\n\n// Si src_ip falta -> FORZAR A y eliminar acciones IP\nconst srcMissing = isMissing(srcIp);\nif (srcMissing) {\n  rp.selected_option = \"A\";\n}\n\n// Normalizar playbook según selected_option\nconst playbookByOption = {\n  A: \"PB_NOTIFY_ONLY\",\n  B: \"PB_MALICIOUS_IP\",\n  C: \"PB_BLOCK_IP\",\n};\nrp.playbook = playbookByOption[rp.selected_option] ?? \"PB_NOTIFY_ONLY\";\n\n// Normalizar requires_approval\nrp.requires_approval = toBool(rp.requires_approval, false);\nif (rp.selected_option === \"C\") rp.requires_approval = true;\nif (rp.selected_option !== \"C\") rp.requires_approval = false; // C es el único caso con aprobación forzosa en tu contrato\n\n// Sanear actions\nif (!Array.isArray(rp.actions)) rp.actions = [];\nconst allowedActionTypes = new Set([\"notify\", \"wazuh_malicious_ip\", \"wazuh_firewall_drop\"]);\n\nrp.actions = rp.actions\n  .filter((a) => a && typeof a === \"object\" && allowedActionTypes.has(a.type))\n  .map((a) => ({\n    type: a.type,\n    params: a.params && typeof a.params === \"object\" ? a.params : {},\n  }));\n\n// Reglas por opción\nif (rp.selected_option === \"A\") {\n  // Solo notify\n  rp.actions = rp.actions.filter((a) => a.type === \"notify\");\n  if (rp.actions.length === 0) {\n    const ruleId = safeStr(ev.rule_id, \"N/D\");\n    const ruleLevel = safeStr(ev.rule_level, \"N/D\");\n    const agentName = safeStr(ev.agent_name, \"N/D\");\n    rp.actions.push(\n      makeNotify(`Verificar alerta (rule_id ${ruleId}, nivel ${ruleLevel}) en agente ${agentName}.`)\n    );\n  }\n}\n\nif (rp.selected_option === \"B\") {\n  // Requiere src_ip\n  if (srcMissing) {\n    rp.selected_option = \"A\";\n    rp.playbook = \"PB_NOTIFY_ONLY\";\n    rp.requires_approval = false;\n    rp.actions = rp.actions.filter((a) => a.type === \"notify\");\n  } else {\n    // Debe incluir wazuh_malicious_ip con ip=src_ip\n    const hasMal = rp.actions.some((a) => a.type === \"wazuh_malicious_ip\");\n    if (!hasMal) {\n      rp.actions.unshift({ type: \"wazuh_malicious_ip\", params: { ip: srcIp } });\n    } else {\n      rp.actions = rp.actions.map((a) => {\n        if (a.type === \"wazuh_malicious_ip\") return { ...a, params: { ...a.params, ip: srcIp } };\n        return a;\n      });\n    }\n    // Debe haber notify también (útil para SOC)\n    const hasNotify = rp.actions.some((a) => a.type === \"notify\");\n    if (!hasNotify) {\n      rp.actions.push(makeNotify(`IP ${srcIp} agregada a lista maliciosa. Validar impacto y corroborar la alerta.`));\n    }\n  }\n}\n\nif (rp.selected_option === \"C\") {\n  // Requiere src_ip\n  if (srcMissing) {\n    rp.selected_option = \"A\";\n    rp.playbook = \"PB_NOTIFY_ONLY\";\n    rp.requires_approval = false;\n    rp.actions = rp.actions.filter((a) => a.type === \"notify\");\n  } else {\n    // Debe incluir firewall_drop con ip=src_ip y requires_approval=true\n    rp.requires_approval = true;\n    rp.actions = rp.actions.filter((a) => a.type === \"wazuh_firewall_drop\"); // en C, solo containment\n    if (rp.actions.length === 0) {\n      rp.actions.push({ type: \"wazuh_firewall_drop\", params: { ip: srcIp } });\n    } else {\n      rp.actions = rp.actions.map((a) => ({ ...a, params: { ...a.params, ip: srcIp } }));\n    }\n  }\n}\n\n// Garantizar options mínimas (si el LLM no las trae o las trae mal)\nif (!rp.options || typeof rp.options !== \"object\" || Array.isArray(rp.options)) rp.options = {};\nfor (const key of [\"A\", \"B\", \"C\"]) {\n  if (!rp.options[key] || typeof rp.options[key] !== \"object\") rp.options[key] = { playbook: playbookByOption[key], actions: [], why: \"\" };\n  if (!rp.options[key].playbook) rp.options[key].playbook = playbookByOption[key];\n  if (!Array.isArray(rp.options[key].actions)) rp.options[key].actions = [];\n  if (typeof rp.options[key].why !== \"string\") rp.options[key].why = safeStr(rp.options[key].why, \"\");\n}\nrp.options.C.requires_approval = true; // contrato: C requiere aprobación\n\n// message_for_hitl mínimo (si falta)\nif (typeof rp.message_for_hitl !== \"string\" || !rp.message_for_hitl.trim()) {\n  const ruleId = safeStr(ev.rule_id, \"N/D\");\n  const ruleLevel = safeStr(ev.rule_level, \"N/D\");\n  const triagePriority = safeStr(ev.triage_priority, \"N/D\");\n  const agentName = safeStr(ev.agent_name, \"N/D\");\n  const sip = srcMissing ? \"No disponible\" : srcIp;\n\n  rp.message_for_hitl =\n    `Alerta rule_id ${ruleId} (nivel ${ruleLevel}), prioridad ${triagePriority}, agente ${agentName}, src_ip: ${sip}. ` +\n    `Se seleccionó opción ${rp.selected_option} (${rp.playbook}). Confirmar contexto y proceder según playbook.`;\n}\n\n// Salida final\nreturn [{\n  json: {\n    ...ev,\n    response_plan: rp,\n    plan_validated: true,\n  }\n}];\n"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        352,
+        -80
+      ],
+      "id": "c11b58c7-9782-466c-b7ab-f02bf367ceb8",
+      "name": "Validate response plan"
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "Return final plan": {
+      "main": [
+        []
+      ]
+    },
+    "Response": {
+      "main": [
+        [
+          {
+            "node": "Merge plan onto event",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Think": {
+      "ai_tool": [
+        [
+          {
+            "node": "Response",
+            "type": "ai_tool",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "OpenAI Chat Response": {
+      "ai_languageModel": [
+        [
+          {
+            "node": "Response",
+            "type": "ai_languageModel",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Merge plan onto event": {
+      "main": [
+        [
+          {
+            "node": "Validate response plan",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Intro Response": {
+      "main": [
+        [
+          {
+            "node": "Build event json_str",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build event json_str": {
+      "main": [
+        [
+          {
+            "node": "Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Validate response plan": {
+      "main": [
+        [
+          {
+            "node": "Return final plan",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": true,
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "versionId": "a2686df4-4543-43a3-93ee-a8d9e596e8b5",
+  "meta": {
+    "instanceId": "5f4321b383184a4332b5d1e5cb6e70ea61441780fd28eb1fe8c95676a3e6f306"
+  },
+  "id": "OUJYYQwzmpM1R3SM",
+  "tags": []
+}

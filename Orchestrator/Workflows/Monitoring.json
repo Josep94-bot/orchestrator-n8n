@@ -1,0 +1,260 @@
+{
+  "name": "Monitoring",
+  "nodes": [
+    {
+      "parameters": {
+        "jsCode": "const full = $node[\"Final event + monitoring\"].json ?? {};\nconst db = $json ?? {};\n\nreturn [{\n  json: {\n    ...full,\n    // ✅ pega event_id real de DB\n    event_id: db.event_id ?? full.event_id ?? null,\n\n    db_upsert_action: db.upsert_action ?? null,\n    db_update_rows: db.updated_rows ?? null\n  }\n}];\n"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1232,
+        16
+      ],
+      "id": "84a0c358-5996-4fb2-bbca-72e072e98518",
+      "name": "Return final monitoring result"
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "-- UPSERT dbo.cec_events (garantiza fila padre para FK de fr_metrics)\nSET NOCOUNT ON;\n\nDECLARE @event_id_input INT =\n  TRY_CONVERT(INT, NULLIF('{{ ($json.event_id ?? \"\").toString().replace(/''/g,\"''''\") }}',''));\n\nDECLARE @wazuh_alert_id NVARCHAR(128) =\n  NULLIF('{{ ($json.wazuh_alert_id ?? \"\").toString().replace(/''/g,\"''''\") }}','');\n\nDECLARE @event_id INT = NULL;\nDECLARE @was_inserted BIT = 0;\n\n-- 1) Si viene event_id y EXISTE, úsalo\nIF @event_id_input IS NOT NULL\nAND EXISTS (SELECT 1 FROM dbo.cec_events WHERE event_id = @event_id_input)\nBEGIN\n  SET @event_id = @event_id_input;\nEND\n\n-- 2) Si no, intenta resolver por wazuh_alert_id (si existe)\nIF @event_id IS NULL\nAND @wazuh_alert_id IS NOT NULL\nBEGIN\n  SELECT TOP 1 @event_id = event_id\n  FROM dbo.cec_events\n  WHERE wazuh_alert_id = @wazuh_alert_id\n  ORDER BY event_id DESC;\nEND\n\n-- 3) Si aún no existe fila, INSERT y captura event_id real (IDENTITY)\nIF @event_id IS NULL\nBEGIN\n  DECLARE @ins TABLE (event_id INT);\n\n  INSERT INTO dbo.cec_events (\n    campaign_id, scenario_id,\n    wazuh_alert_id,\n    event_timestamp, ts_ingest,\n    src_ip, dst_ip, src_port, dst_port,\n    agent_name,\n    rule_id, rule_level, rule_mitre_id, rule_mitre_tactic,\n    label_wazuh,\n    triage_priority, triage_risk, triage_severity,\n    raw_alert\n  )\n  OUTPUT inserted.event_id INTO @ins(event_id)\n  VALUES (\n    TRY_CONVERT(int,   NULLIF('{{ ($json.campaign_id ?? \"\").toString().replace(/''/g,\"''''\") }}','')),\n    TRY_CONVERT(int,   NULLIF('{{ ($json.scenario_id ?? \"\").toString().replace(/''/g,\"''''\") }}','')),\n\n    @wazuh_alert_id,\n\n    TRY_CONVERT(datetime2(7), NULLIF('{{ ($json.event_timestamp ?? \"\").toString().replace(/''/g,\"''''\") }}','')),\n    TRY_CONVERT(datetime2(7), NULLIF('{{ ($json.ts_ingest ?? \"\").toString().replace(/''/g,\"''''\") }}','')),\n\n    NULLIF('{{ ($json.src_ip ?? \"\").toString().replace(/''/g,\"''''\") }}',''),\n    NULLIF('{{ ($json.dst_ip ?? \"\").toString().replace(/''/g,\"''''\") }}',''),\n    TRY_CONVERT(int, NULLIF('{{ ($json.src_port ?? \"\").toString().replace(/''/g,\"''''\") }}','')),\n    TRY_CONVERT(int, NULLIF('{{ ($json.dst_port ?? \"\").toString().replace(/''/g,\"''''\") }}','')),\n\n    NULLIF('{{ ($json.agent_name ?? \"\").toString().replace(/''/g,\"''''\") }}',''),\n\n    TRY_CONVERT(int, NULLIF('{{ ($json.rule_id ?? \"\").toString().replace(/''/g,\"''''\") }}','')),\n    TRY_CONVERT(int, NULLIF('{{ ($json.rule_level ?? \"\").toString().replace(/''/g,\"''''\") }}','')),\n    NULLIF('{{ ($json.rule_mitre_id ?? \"\").toString().replace(/''/g,\"''''\") }}',''),\n    NULLIF('{{ ($json.rule_mitre_tactic ?? \"\").toString().replace(/''/g,\"''''\") }}',''),\n\n    NULLIF('{{ ($json.label_wazuh ?? \"\").toString().replace(/''/g,\"''''\") }}',''),\n\n    NULLIF('{{ ($json.triage_priority ?? \"\").toString().replace(/''/g,\"''''\") }}',''),\n    TRY_CONVERT(float, NULLIF('{{ ($json.triage_risk ?? \"\").toString().replace(/''/g,\"''''\") }}','')),\n    TRY_CONVERT(int,   NULLIF('{{ ($json.triage_severity ?? \"\").toString().replace(/''/g,\"''''\") }}','')),\n\n    NULLIF('{{ ($json.raw_alert ?? \"\").toString().replace(/''/g,\"''''\") }}','')\n  );\n\n  SELECT TOP 1 @event_id = event_id FROM @ins;\n  SET @was_inserted = 1;\nEND\n\n-- 4) UPDATE “no machacar” (incluye monitoring)\nUPDATE dbo.cec_events\nSET\n  campaign_id = COALESCE(TRY_CONVERT(int, NULLIF('{{ ($json.campaign_id ?? \"\").toString().replace(/''/g,\"''''\") }}','')), campaign_id),\n  scenario_id = COALESCE(TRY_CONVERT(int, NULLIF('{{ ($json.scenario_id ?? \"\").toString().replace(/''/g,\"''''\") }}','')), scenario_id),\n\n  wazuh_alert_id = COALESCE(@wazuh_alert_id, wazuh_alert_id),\n\n  event_timestamp = COALESCE(\n    TRY_CONVERT(datetime2(7), NULLIF('{{ ($json.event_timestamp ?? \"\").toString().replace(/''/g,\"''''\") }}','')),\n    event_timestamp\n  ),\n  ts_ingest = COALESCE(\n    TRY_CONVERT(datetime2(7), NULLIF('{{ ($json.ts_ingest ?? \"\").toString().replace(/''/g,\"''''\") }}','')),\n    ts_ingest\n  ),\n\n  src_ip = COALESCE(NULLIF('{{ ($json.src_ip ?? \"\").toString().replace(/''/g,\"''''\") }}',''), src_ip),\n  dst_ip = COALESCE(NULLIF('{{ ($json.dst_ip ?? \"\").toString().replace(/''/g,\"''''\") }}',''), dst_ip),\n\n  src_port = COALESCE(TRY_CONVERT(int, NULLIF('{{ ($json.src_port ?? \"\").toString().replace(/''/g,\"''''\") }}','')), src_port),\n  dst_port = COALESCE(TRY_CONVERT(int, NULLIF('{{ ($json.dst_port ?? \"\").toString().replace(/''/g,\"''''\") }}','')), dst_port),\n\n  agent_name = COALESCE(NULLIF('{{ ($json.agent_name ?? \"\").toString().replace(/''/g,\"''''\") }}',''), agent_name),\n\n  rule_id = COALESCE(TRY_CONVERT(int, NULLIF('{{ ($json.rule_id ?? \"\").toString().replace(/''/g,\"''''\") }}','')), rule_id),\n  rule_level = COALESCE(TRY_CONVERT(int, NULLIF('{{ ($json.rule_level ?? \"\").toString().replace(/''/g,\"''''\") }}','')), rule_level),\n\n  rule_mitre_id = COALESCE(NULLIF('{{ ($json.rule_mitre_id ?? \"\").toString().replace(/''/g,\"''''\") }}',''), rule_mitre_id),\n  rule_mitre_tactic = COALESCE(NULLIF('{{ ($json.rule_mitre_tactic ?? \"\").toString().replace(/''/g,\"''''\") }}',''), rule_mitre_tactic),\n\n  label_wazuh = COALESCE(NULLIF('{{ ($json.label_wazuh ?? \"\").toString().replace(/''/g,\"''''\") }}',''), label_wazuh),\n\n  triage_priority = COALESCE(NULLIF('{{ ($json.triage_priority ?? \"\").toString().replace(/''/g,\"''''\") }}',''), triage_priority),\n  triage_risk = COALESCE(TRY_CONVERT(float, NULLIF('{{ ($json.triage_risk ?? \"\").toString().replace(/''/g,\"''''\") }}','')), triage_risk),\n  triage_severity = COALESCE(TRY_CONVERT(int, NULLIF('{{ ($json.triage_severity ?? \"\").toString().replace(/''/g,\"''''\") }}','')), triage_severity),\n\n  monitoring_classification = COALESCE(NULLIF('{{ ($json.monitoring_classification ?? \"\").toString().replace(/''/g,\"''''\") }}',''), monitoring_classification),\n  monitoring_confidence = COALESCE(TRY_CONVERT(float, NULLIF('{{ ($json.monitoring_confidence ?? \"\").toString().replace(/''/g,\"''''\") }}','')), monitoring_confidence),\n  monitoring_summary = COALESCE(NULLIF('{{ ($json.monitoring_summary ?? \"\").toString().replace(/''/g,\"''''\") }}',''), monitoring_summary)\n\nWHERE event_id = @event_id;\n\n-- 5) Output para debug\nSELECT\n  @event_id AS event_id,\n  CASE WHEN @was_inserted = 1 THEN 'INSERTED' ELSE 'UPDATED_OR_EXISTS' END AS upsert_action,\n  @@ROWCOUNT AS updated_rows;\n\n"
+      },
+      "type": "n8n-nodes-base.microsoftSql",
+      "typeVersion": 1.1,
+      "position": [
+        1056,
+        16
+      ],
+      "id": "3bd48ca3-2c00-401b-9e63-5c69fe383f99",
+      "name": "Upsert cec_events",
+      "credentials": {
+        "microsoftSql": {
+          "id": "59sSXaGtmRRjhh5e",
+          "name": "Microsoft SQL account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "description": "You are the Think tool for the SOC Monitoring.\n\nPurpose:\n- Use this tool ONLY if you genuinely need an extra sanity-check to avoid a wrong classification.\n- This tool does NOT fetch new information, does NOT execute actions, and does NOT change any database/state.\n- It only appends a short internal note to the logs.\n\nWhen to use (examples):\n- The event fields are inconsistent (e.g., triage_severity/rule_level missing or strange).\n- You suspect the draft output might violate the strict schema or constraints.\n- You need to ensure you are not “hallucinating” values (IPs, IDs, timestamps, hostnames).\n\nWhen NOT to use:\n- If the decision is straightforward and clearly matches the rules.\n- If you are only repeating obvious checks with no real uncertainty.\n\nWhat to do (quick checklist):\n1) Schema check:\n   - Output is ONE minified JSON object, ONE line, no markdown/fences.\n   - monitoring.classification ∈ {\"benign\",\"suspicious\",\"malicious\"}\n   - monitoring.confidence is a number 0.0–1.0\n   - monitoring.summary is <= 20 words (single sentence)\n2) Anti-hallucination check:\n   - Do not invent or alter src_ip/dst_ip/rule_id/rule_level/agent_name/timestamps.\n   - If a value is missing in input, keep it missing; do not “fill in” guesses.\n\nOutput format (keep short):\n- Start with: \"THINK_CHECK:\"\n- Then 3–8 bullets, each either \"OK: ...\" or \"FIX: ...\".\n- Do NOT output the final JSON response. Do NOT add extra commentary.\n\n"
+      },
+      "type": "@n8n/n8n-nodes-langchain.toolThink",
+      "typeVersion": 1.1,
+      "position": [
+        704,
+        240
+      ],
+      "id": "180bbb9f-cce5-4ad7-b366-33a556d8743c",
+      "name": "Think"
+    },
+    {
+      "parameters": {
+        "jsCode": "const envelope = $json ?? {};\n\n// 0) set ts_ingest aquí (ya no necesitas Set ts_ingest en Router)\nconst nowIso = new Date().toISOString();\nenvelope.ts_ingest = envelope.ts_ingest || nowIso;\nenvelope.ts_ingest_ms = envelope.ts_ingest_ms || Date.now();\n\n// Heurística: si ya parece CEC-like, NO normalizar de nuevo, solo asegurar ts_ingest y raw_alert\nconst alreadyCEC =\n  envelope.event_timestamp &&\n  (envelope.rule_level != null || envelope.rule_id != null) &&\n  (envelope.triage_severity != null || envelope.triage_priority != null || envelope.triage_risk != null);\n\nif (alreadyCEC) {\n  // raw_alert opcional para trazabilidad\n  if (!envelope.raw_alert) envelope.raw_alert = JSON.stringify(envelope.raw ?? envelope);\n  return [{ json: envelope }];\n}\n\n// Si no es CEC, asumimos Wazuh-like y normalizamos desde \"raw\"\nlet raw = envelope.body ?? envelope;\nif (raw && typeof raw === \"object\" && raw._source) raw = raw._source;\n\nconst num = (x, d = null) => {\n  const n = Number(x);\n  return Number.isFinite(n) ? n : d;\n};\n\nconst normalizeTimestamp = (value) => {\n  if (!value) return new Date().toISOString();\n  const fixed = String(value).replace(/([+-]\\d{2})(\\d{2})$/, \"$1:$2\");\n  const d = new Date(fixed);\n  return Number.isNaN(d.getTime()) ? new Date().toISOString() : d.toISOString();\n};\n\nconst event_timestamp = normalizeTimestamp(\n  raw?.timestamp || raw?.[\"@timestamp\"] || envelope?.fields?.timestamp?.[0] || null\n);\n\nconst rule_level = num(raw?.rule?.level, null);\nconst rule_id    = num(raw?.rule?.id, null);\n\nlet label_wazuh = \"benign\";\nif (Number.isFinite(rule_level) && rule_level >= 7) label_wazuh = \"malicious\";\n\nconst rule_mitre_id =\n  raw?.rule?.mitre?.id?.[0] ?? raw?.rule?.mitre?.id ?? null;\n\nconst rule_mitre_tactic =\n  raw?.rule?.mitre?.tactic?.[0] ?? raw?.rule?.mitre?.tactic ?? null;\n\nconst src_ip =\n  raw?.data?.srcip ?? raw?.data?.src_ip ?? raw?.data?.srcIp ?? null;\n\nconst dst_ip =\n  raw?.data?.dstip ?? raw?.data?.dst_ip ?? raw?.data?.dstIp ?? null;\n\nconst src_port = num(raw?.data?.srcport, null);\nconst dst_port = num(raw?.data?.dstport, null);\n\nconst agent_name =\n  raw?.agent?.name || raw?.agent?.id || raw?.manager?.name || null;\n\nconst wazuh_alert_id = envelope?._id ?? raw?.id ?? null;\n\n// triage heurístico\nconst ratePps       = num(raw?.metrics?.rate_pps, 0);\nconst uniqueSources = num(raw?.metrics?.unique_src_ips, 1);\nconst durationSec   = num(raw?.metrics?.duration_sec, 0);\nconst assetCritical = Math.max(1, Math.min(5, num(raw?.asset?.criticality, 3)));\n\nconst volScore =\n  ratePps >= 500000 ? 5 :\n  ratePps >= 200000 ? 4 :\n  ratePps >=  50000 ? 3 :\n  ratePps >=  10000 ? 2 : 1;\n\nconst fanoutScore =\n  uniqueSources >= 5000 ? 5 :\n  uniqueSources >= 1000 ? 4 :\n  uniqueSources >=  200 ? 3 :\n  uniqueSources >=   50 ? 2 : 1;\n\nconst persistScore =\n  durationSec >= 3600 ? 5 :\n  durationSec >=  900 ? 4 :\n  durationSec >=  300 ? 3 :\n  durationSec >=   60 ? 2 : 1;\n\nconst impactScore = assetCritical;\n\nconst triage_risk =\n  0.30 * volScore +\n  0.25 * fanoutScore +\n  0.20 * persistScore +\n  0.25 * impactScore;\n\nlet triage_severity = Math.round((triage_risk / 5) * 15);\ntriage_severity = Math.max(0, Math.min(15, triage_severity));\n\nlet triage_priority = \"Low\";\nif (triage_severity >= 4 && triage_severity <= 7) triage_priority = \"Medium\";\nelse if (triage_severity >= 8 && triage_severity <= 11) triage_priority = \"High\";\nelse if (triage_severity >= 12) triage_priority = \"Critical\";\n\nconst normalized = {\n  // conserva si vienen de arriba\n  campaign_id: num(raw?.campaign_id, envelope.campaign_id ?? 1),\n  scenario_id: num(raw?.scenario_id, envelope.scenario_id ?? 101),\n  event_id: envelope.event_id ?? null,\n\n  wazuh_alert_id,\n  event_timestamp,\n\n  src_ip,\n  dst_ip,\n  src_port,\n  dst_port,\n\n  host_id: envelope.host_id ?? null,\n  agent_name,\n\n  rule_id,\n  rule_level,\n  rule_mitre_id,\n  rule_mitre_tactic,\n\n  label_wazuh,\n  triage_priority,\n  triage_risk,\n  triage_severity,\n\n  ts_ingest: envelope.ts_ingest,\n  ts_ingest_ms: envelope.ts_ingest_ms,\n\n  raw_alert: envelope.raw_alert ?? JSON.stringify(raw)\n};\n\nreturn [{ json: normalized }];\n"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        336,
+        32
+      ],
+      "id": "eaa54486-842b-4be1-a2f3-e5314d56a856",
+      "name": "CEC Normalization + ts_ingest"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Final event + monitoring (UPDATED)\n// - Ya NO maneja routing_send_to_analysis / routing_reason\n// - Sigue parseando salida del agente de forma robusta\n// - Normaliza monitoring_* y deja flags de observabilidad\n\n// Evento original (ya contiene event_id)\nconst event = $node[\"CEC Normalization + ts_ingest\"].json ?? $json ?? {};\n\n// Salida del agente (puede venir en distintas llaves)\nconst agentNodeJson = $node[\"Monitoring\"].json ?? {};\nconst agentOutputStr =\n  agentNodeJson.output ??\n  agentNodeJson.text ??\n  agentNodeJson.response ??\n  \"{}\";\n\nconst toNumOrNull = (v) => {\n  const n = typeof v === \"number\" ? v : Number(v);\n  return Number.isFinite(n) ? n : null;\n};\n\nconst toStrOrNull = (v) => {\n  if (v === null || v === undefined) return null;\n  const s = String(v).trim();\n  return s ? s : null;\n};\n\nlet agentData = null;\nlet parseOk = false;\n\ntry {\n  // Si ya vino objeto (poco común), úsalo\n  agentData =\n    (typeof agentOutputStr === \"object\" && agentOutputStr)\n      ? agentOutputStr\n      : JSON.parse(String(agentOutputStr));\n  parseOk = !!agentData && typeof agentData === \"object\";\n} catch {\n  agentData = null;\n  parseOk = false;\n}\n\n// Monitoring fields\nconst classification = toStrOrNull(agentData?.monitoring?.classification);\nconst confidence = toNumOrNull(agentData?.monitoring?.confidence);\nconst summary = toStrOrNull(agentData?.monitoring?.summary);\n\nreturn [{\n  json: {\n    ...event,\n\n    // 🔹 flags para debug/observabilidad\n    monitoring_parse_ok: parseOk,\n    monitoring_raw_output: String(agentOutputStr).slice(0, 500),\n\n    // 🔹 Monitoring\n    monitoring_classification: classification,\n    monitoring_confidence: confidence,\n    monitoring_summary: summary,\n  }\n}];\n"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        864,
+        16
+      ],
+      "id": "52553636-5994-4585-a140-080bd5055d47",
+      "name": "Final event + monitoring",
+      "alwaysOutputData": false
+    },
+    {
+      "parameters": {
+        "model": {
+          "__rl": true,
+          "value": "gpt-3.5-turbo",
+          "mode": "list",
+          "cachedResultName": "gpt-3.5-turbo"
+        },
+        "builtInTools": {},
+        "options": {
+          "temperature": 0,
+          "maxRetries": 2
+        }
+      },
+      "type": "@n8n/n8n-nodes-langchain.lmChatOpenAi",
+      "typeVersion": 1.3,
+      "position": [
+        448,
+        208
+      ],
+      "id": "167dfe04-cfa0-4a24-9013-6114bade6540",
+      "name": "OpenAI Chat Monitoring",
+      "credentials": {
+        "openAiApi": {
+          "id": "yt3NGZbVrbZuYATf",
+          "name": "OpenAi account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "promptType": "define",
+        "text": "=# IA Monitoring (LLM Prompt) — output MUST be a single-line JSON string only\n\nYou are a SOC Monitoring agent.\n\nYou receive ONE normalized Wazuh alert as JSON (CEC-like). The input JSON may contain:\n- Root normalized fields: event_timestamp/ts_ingest, campaign_id, scenario_id, event_id, agent_name, src_ip, dst_ip, src_port, dst_port, rule_id, rule_level, triage_severity (0–15), triage_priority, triage_risk (1–5), triage{...}\n- raw: original Wazuh alert (raw.rule.*, raw.data.*, raw.agent.*)\n\nCRITICAL RULES:\n- NEVER invent, mask, generalize, or modify IPs, rule IDs, timestamps or hostnames.\n- Use precedence for Source IP: src_ip → raw.data.srcip → \"Not available\"\n- Destination IP: dst_ip → raw.data.dstip → \"Not available\"\n- Host: agent_name → raw.agent.name → \"Not available\"\n\nTASK:\nProduce a preliminary classification:\n\n- monitoring_classification MUST be exactly one of: \"benign\", \"suspicious\", \"malicious\"\n- monitoring_confidence MUST be a number 0.0–1.0 (use 0.50 if uncertain)\n- monitoring_summary MUST be a short single sentence (<= 20 words)\n\nOUTPUT FORMAT (STRICT):\nReturn ONLY one minified JSON object in ONE line, no markdown, no code fences, no extra text.\n\nSchema:\n{\n  \"monitoring\": {\n    \"classification\": \"benign|suspicious|malicious\",\n    \"confidence\": 0.0,\n    \"summary\": \"one short sentence\"\n  }\n}\n\n",
+        "options": {
+          "maxIterations": 3
+        }
+      },
+      "type": "@n8n/n8n-nodes-langchain.agent",
+      "typeVersion": 3,
+      "position": [
+        496,
+        32
+      ],
+      "id": "95083f43-383a-438c-a34e-563b32cb91ac",
+      "name": "Monitoring",
+      "alwaysOutputData": true,
+      "onError": "continueErrorOutput"
+    },
+    {
+      "parameters": {
+        "jsCode": "function stripFences(s) {\n  if (typeof s !== \"string\") return s;\n  return s\n    .replace(/```json\\s*([\\s\\S]*?)\\s*```/gi, \"$1\")\n    .replace(/```\\s*([\\s\\S]*?)\\s*```/g, \"$1\")\n    .trim();\n}\n\nfunction safeParse(maybe) {\n  if (maybe == null) return null;\n  if (typeof maybe === \"object\") return maybe;\n  if (typeof maybe !== \"string\") return null;\n\n  const s0 = stripFences(maybe);\n  if (!s0) return null;\n\n  try { return JSON.parse(s0); } catch {}\n\n  const fo = s0.indexOf(\"{\");\n  const lo = s0.lastIndexOf(\"}\");\n  if (fo !== -1 && lo !== -1 && lo > fo) {\n    try { return JSON.parse(s0.slice(fo, lo + 1)); } catch {}\n  }\n\n  const fa = s0.indexOf(\"[\");\n  const la = s0.lastIndexOf(\"]\");\n  if (fa !== -1 && la !== -1 && la > fa) {\n    try { return JSON.parse(s0.slice(fa, la + 1)); } catch {}\n  }\n\n  return null;\n}\n\nconst j = $json ?? {};\n\n// prioridad: soc_payload / body (webhook) / wrappers comunes\nlet event = j.event ?? j.input ?? j.payload ?? j.query ?? j.body ?? j;\nevent = safeParse(event) ?? event;\n\n// si viene array, toma el primer item\nif (Array.isArray(event)) event = event[0] ?? event;\n\n// dashboard style\nif (event && typeof event === \"object\" && event._source) event = event._source;\n\n// completa IDs útiles sin pisar\nif (event && typeof event === \"object\" && !Array.isArray(event)) {\n  const keys = [\"event_id\",\"wazuh_alert_id\",\"event_timestamp\",\"ts_ingest\",\"campaign_id\",\"scenario_id\"];\n  for (const k of keys) {\n    if ((event[k] == null || event[k] === \"\") && j[k] != null && j[k] !== \"\") event[k] = j[k];\n  }\n}\n\nreturn [{ json: event }];\n\n"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        160,
+        32
+      ],
+      "id": "f079afb5-9046-4e3f-857e-c556d12c813b",
+      "name": "Input unwrap"
+    },
+    {
+      "parameters": {
+        "inputSource": "passthrough"
+      },
+      "type": "n8n-nodes-base.executeWorkflowTrigger",
+      "typeVersion": 1.1,
+      "position": [
+        -16,
+        32
+      ],
+      "id": "77f75b92-2796-4950-8cb3-3103914b8007",
+      "name": "Intro Monitoring",
+      "alwaysOutputData": true
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "Return final monitoring result": {
+      "main": [
+        []
+      ]
+    },
+    "Upsert cec_events": {
+      "main": [
+        [
+          {
+            "node": "Return final monitoring result",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Think": {
+      "ai_tool": [
+        [
+          {
+            "node": "Monitoring",
+            "type": "ai_tool",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "CEC Normalization + ts_ingest": {
+      "main": [
+        [
+          {
+            "node": "Monitoring",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Final event + monitoring": {
+      "main": [
+        [
+          {
+            "node": "Upsert cec_events",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "OpenAI Chat Monitoring": {
+      "ai_languageModel": [
+        [
+          {
+            "node": "Monitoring",
+            "type": "ai_languageModel",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Monitoring": {
+      "main": [
+        [
+          {
+            "node": "Final event + monitoring",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Input unwrap": {
+      "main": [
+        [
+          {
+            "node": "CEC Normalization + ts_ingest",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Intro Monitoring": {
+      "main": [
+        [
+          {
+            "node": "Input unwrap",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": true,
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "versionId": "34d39662-03b6-4795-8b87-7965512e1ab2",
+  "meta": {
+    "templateCredsSetupCompleted": true,
+    "instanceId": "5f4321b383184a4332b5d1e5cb6e70ea61441780fd28eb1fe8c95676a3e6f306"
+  },
+  "id": "wzhRigymIVIwiaFi",
+  "tags": []
+}

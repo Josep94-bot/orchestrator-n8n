@@ -1,0 +1,258 @@
+{
+  "name": "Analysis",
+  "nodes": [
+    {
+      "parameters": {
+        "jsCode": "// ts_analysis_start\nconst nowIso = new Date().toISOString();\n\nreturn $input.all().map(item => {\n  const j = item.json ?? {};\n  return {\n    json: {\n      ...j,\n      ts_analysis_start: j.ts_analysis_start || nowIso\n    }\n  };\n});\n"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -208,
+        368
+      ],
+      "id": "bb3c7375-6ebb-470d-93ca-2b41d66d95ea",
+      "name": "ts_analysis_start"
+    },
+    {
+      "parameters": {
+        "jsCode": "// ts_analysis_end + tta (MTTA/TTA) + \"evento completo\" (evento original + análisis)\n// + parseo de overlay.output (JSON en texto -> objeto)\n// + TTA usando ts_ingest si existe, si no usa event_timestamp\n\nconst nowIso = new Date().toISOString();\n\nconst parseMs = (s) => {\n  const t = Date.parse(s);\n  return Number.isFinite(t) ? t : null;\n};\n\n// --- Helpers para parsear JSON texto (salida LLM) de forma robusta ---\nconst stripJsonFences = (text) => {\n  if (typeof text !== \"string\") return text;\n  return text\n    .replace(/```json\\s*([\\s\\S]*?)\\s*```/gi, \"$1\")\n    .replace(/```\\s*([\\s\\S]*?)\\s*```/g, \"$1\")\n    .trim();\n};\n\nconst extractLikelyJson = (text) => {\n  if (typeof text !== \"string\") return text;\n  const s = text.trim();\n\n  if ((s.startsWith(\"{\") && s.endsWith(\"}\")) || (s.startsWith(\"[\") && s.endsWith(\"]\"))) return s;\n\n  const firstObj = s.indexOf(\"{\");\n  const lastObj = s.lastIndexOf(\"}\");\n  if (firstObj !== -1 && lastObj !== -1 && lastObj > firstObj) return s.slice(firstObj, lastObj + 1);\n\n  const firstArr = s.indexOf(\"[\");\n  const lastArr = s.lastIndexOf(\"]\");\n  if (firstArr !== -1 && lastArr !== -1 && lastArr > firstArr) return s.slice(firstArr, lastArr + 1);\n\n  return s;\n};\n\nconst safeParseJson = (maybeTextOrObj) => {\n  if (maybeTextOrObj == null) return { ok: false, value: null };\n  if (typeof maybeTextOrObj === \"object\") return { ok: true, value: maybeTextOrObj };\n  if (typeof maybeTextOrObj !== \"string\") return { ok: false, value: null };\n\n  const cleaned = extractLikelyJson(stripJsonFences(maybeTextOrObj));\n  try {\n    return { ok: true, value: JSON.parse(cleaned) };\n  } catch {\n    return { ok: false, value: null };\n  }\n};\n\n// 1) Base = evento original (antes del LLM)\nconst base = $node[\"ts_analysis_start\"]?.json ?? {};\n\n// 2) Overlay = salida del agente (Analisis-MCP)\nlet overlay = $json ?? {};\n\n// 2.1) Si overlay.output existe (string JSON), parsear y fusionar\nif (overlay && overlay.output != null) {\n  const parsed = safeParseJson(overlay.output);\n  if (parsed.ok && parsed.value && typeof parsed.value === \"object\") {\n    overlay = { ...overlay, ...parsed.value };\n  }\n}\n\n// 3) ts_ingest: usa ts_ingest, si no existe usa event_timestamp (para no dar 0 siempre)\nconst tsIngest = base.ts_ingest || base.event_timestamp || \"\";\n\n// 4) Calcula TTA en segundos\nconst ingestMs = parseMs(tsIngest);\nconst endMs = parseMs(nowIso);\nconst ttaSec = (ingestMs && endMs) ? Math.round((endMs - ingestMs) / 1000) : 0;\n\n// 5) ts_analysis_start: prioridad overlay > base > nowIso\nconst tsStart = overlay.ts_analysis_start || base.ts_analysis_start || nowIso;\n\n// 6) Resultado final\nreturn [{\n  json: {\n    ...base,\n    ...overlay,\n    ts_analysis_start: tsStart,\n    ts_analysis_end: nowIso,\n    tta_sec: overlay.tta_sec ?? base.tta_sec ?? ttaSec,\n  }\n}];\n"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        256,
+        368
+      ],
+      "id": "49c8142e-5d9b-44fb-a68f-4c94fd7462ad",
+      "name": "ts_analysis_end+tta"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Devuelve el item de entrada tal cual.\n// Si por error solo llega telegram_text, intenta recuperar el evento original desde el trigger.\n\nconst current = $json ?? {};\nconst all = $input.all();\n\n// Caso normal: ya viene el evento completo\nif (current.event_id || current.rule_id || current.raw || current.analysis) {\n  return all;\n}\n\n// Fallback: intenta recuperar el evento original del trigger\ntry {\n  const incoming = $items(\"Intro Analysis\");\n  if (incoming?.length) return incoming.map(i => ({ json: i.json }));\n} catch {}\n\n// Último fallback: devuelve lo que hay\nreturn all;\n"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        592,
+        368
+      ],
+      "id": "ba9d5a68-fcfc-43f3-a57f-8e7be6c731b8",
+      "name": "Return final event"
+    },
+    {
+      "parameters": {
+        "promptType": "define",
+        "text": "=# IA Analisis (LLM Prompt) — output MUST be a single-line JSON string only\n\nYou are a SOC Investigation & Enrichment agent (Analysis). .\n\nYou receive ONE normalized Wazuh alert as JSON (CEC-like). The input JSON may contain:\n- Root normalized fields: event_timestamp/ts_ingest, campaign_id, scenario_id, event_id, agent_name, src_ip, dst_ip, src_port, dst_port, rule_id, rule_level, triage_severity (0–15), triage_priority, triage_risk (1–5), triage{...}\n- raw: original Wazuh alert (raw.rule.*, raw.data.*, raw.agent.*)\n- monitoring outputs may already exist (e.g., monitoring_classification, monitoring_confidence, monitoring_summary)\n\nCRITICAL RULES:\n- NEVER invent, mask, generalize, or modify IPs, rule IDs, timestamps or hostnames.\n- Source IP: src_ip → raw.data.srcip → \"Not available\"\n- Destination IP: dst_ip → raw.data.dstip → \"Not available\"\n- Host: agent_name → raw.agent.name → \"Not available\"\n- Treat raw.rule.mitre.* as hints only; you MUST also infer MITRE from behavior.\n\nPROCESS (CONDITIONAL):\nCall the Think tool ONLY if ANY of these are true (evaluate using the INPUT JSON + your initial assessment):\n1) Your preliminary classification would be \"suspicious\" or \"malicious\"\n2) triage_severity >= 6 OR rule_level >= 6\n3) src_ip is missing/empty OR dst_ip is missing/empty\n4) MITRE inferred is uncertain (low confidence or multiple plausible techniques/tactics)\n\nIf you call Think:\n- Use it to clarify uncertainties and strengthen evidence (e.g., map behavior to MITRE, explain rule trigger, resolve missing fields from raw.*).\n- Then produce the final output JSON.\n\nTASK:\n1) Produce a concise investigation summary (2–5 sentences) describing:\n- what happened, why it triggered (rule_id/rule_level/triage_*), key indicators (IPs/ports/host), and likely intent.\n\n2) Produce metrics fields for downstream SQL insert:\n\nA) VERDICT / CLASSIFICATION (3-class)\n- classification MUST be exactly \"benign\" or \"suspicious\" or \"malicious\"\n\nCLASSIFICATION GUIDANCE:\n- malicious: clear active attack behavior (e.g., brute force, scan, exploit, malware, privilege abuse)\n- suspicious: ambiguous but concerning indicators; needs analyst review; partial evidence or weak signals\n- benign: informational/expected/low-risk noise; policy/log events without attacker behavior\n\nB) LABEL (binary for metrics)\n- label_predicha MUST be exactly \"malicious\" or \"benign\"\n\nCONSISTENCY RULES (MANDATORY):\n- If classification == \"malicious\" => label_predicha MUST be \"malicious\"\n- If label_predicha == \"malicious\" => classification MUST be \"malicious\"\n- If classification == \"suspicious\" => label_predicha MUST be \"benign\" (because label_predicha is binary)\n\nC) SEVERITY (impact/urgency)\n- severidad_predicha MUST be exactly \"baja\", \"media\", or \"alta\"\n\nDEFAULT SEVERITY MAPPING (use best judgment + evidence):\n- If (rule_level >= 11) OR (triage_severity >= 11) → severidad_predicha=\"alta\"\n- Else if (rule_level >= 7) OR (triage_severity >= 7) → severidad_predicha=\"media\"\n- Else → \"baja\"\n\nD) CONFIDENCE\n- score_confidence MUST be numeric 0.0–1.0\nCONFIDENCE RULES:\n- Start 0.35\n- +0.20 if strong indicators in rule.description/groups/raw.data\n- +0.20 if MITRE inferred with clear match\n- +0.15 if rule_level/triage_severity are high and consistent\n- Clamp to [0,1]\n\nE) MITRE\n- mitre_technique MUST be a technique ID like \"T1110\" or \"Not available\"\n- mitre_tactic MUST be a tactic name like \"Credential Access\" or \"Not available\"\n\nOUTPUT FORMAT (STRICT):\nReturn ONLY one minified JSON object in ONE line, no markdown, no code fences, no extra text.\n\nSchema:\n{\n  \"classification\": \"benign|suspicious|malicious\",\n  \"report_text\": \"short investigation summary (plain text)\",\n  \"label_predicha\": \"malicious|benign\",\n  \"severidad_predicha\": \"baja|media|alta\",\n  \"score_confidence\": 0.0,\n  \"mitre_technique\": \"Txxxx or Not available\",\n  \"mitre_tactic\": \"Tactic name or Not available\",\n  \"analysis\": {\n    \"wazuh_rule_id\": \"copy from rule_id/raw.rule.id or Not available\",\n    \"wazuh_rule_level\": \"copy from rule_level/raw.rule.level or Not available\",\n    \"ips\": { \"src_ip\": \"…\", \"dst_ip\": \"…\", \"host\": \"…\" },\n    \"mitre_wazuh\": { \"technique\": \"…\", \"tactic\": \"…\" },\n    \"mitre_inferred\": { \"technique\": \"…\", \"tactic\": \"…\" }\n  }\n}\n\n",
+        "options": {
+          "maxIterations": 3
+        }
+      },
+      "type": "@n8n/n8n-nodes-langchain.agent",
+      "typeVersion": 3,
+      "position": [
+        -48,
+        368
+      ],
+      "id": "c5d92a89-1b27-4d1b-9b2a-d33aa4ab534e",
+      "name": "Analysis",
+      "alwaysOutputData": true
+    },
+    {
+      "parameters": {
+        "description": "You are the Think tool for the SOC Analysis agent (Investigation & Enrichment).\n\nPurpose:\n- Use this tool ONLY when you need a careful sanity-check before producing the final Analysis JSON.\n- This tool does NOT fetch new data, does NOT execute actions, and does NOT change any database/state.\n- It only writes a short internal note to the logs to reduce mistakes.\n\nWhen to use (examples):\n- classification is borderline (benign vs suspicious vs malicious).\n- You are unsure about MITRE technique/tactic mapping from the behavior.\n- Input fields are missing or inconsistent (src_ip/dst_ip/agent_name/rule_level/triage_severity).\n- You risk violating output constraints (schema, consistency rules, word limits).\n- You suspect you might be “filling gaps” with invented values.\n\nWhen NOT to use:\n- The decision is straightforward and clearly supported by rule_level/triage + raw evidence.\n- You are only restating the input without adding validation value.\n\nQuick checklist (validate BEFORE final output):\n1) Anti-hallucination:\n   - Do NOT invent/alter IPs, rule IDs/levels, timestamps, hostnames.\n   - If missing, keep as \"Not available\" (or keep null if your pipeline expects null).\n2) Consistency rules:\n   - classification ∈ {\"benign\",\"suspicious\",\"malicious\"} exactly.\n   - label_predicha ∈ {\"benign\",\"malicious\"} exactly.\n   - If classification == \"malicious\" => label_predicha MUST be \"malicious\".\n   - If label_predicha == \"malicious\" => classification MUST be \"malicious\".\n   - If classification == \"suspicious\" => label_predicha MUST be \"benign\".\n3) Severity mapping sanity:\n   - severidad_predicha ∈ {\"baja\",\"media\",\"alta\"}.\n   - Check rule_level/triage_severity alignment with chosen severity.\n4) Confidence scoring sanity:\n   - score_confidence is numeric 0.0–1.0.\n   - Ensure confidence reflects strength of evidence + MITRE clarity.\n5) MITRE quality:\n   - Provide mitre_technique like \"Txxxx\" or \"Not available\".\n   - Provide mitre_tactic name or \"Not available\".\n   - Prefer behavior-based inference; treat Wazuh MITRE as hint.\n6) Output discipline:\n   - Final output must be ONE minified JSON object in ONE line.\n   - report_text: 2–5 sentences, plain text, no markdown.\n   - analysis.* sub-object includes wazuh_rule_id/level and ips/mitre fields.\n\nOutput format (keep it short):\n- Start with: \"THINK_CHECK:\"\n- Then 4–10 bullets, each starting with \"OK:\" or \"FIX:\".\n- Do NOT output the final JSON. Do NOT add extra commentary.\n"
+      },
+      "type": "@n8n/n8n-nodes-langchain.toolThink",
+      "typeVersion": 1.1,
+      "position": [
+        160,
+        560
+      ],
+      "id": "2cfd4cca-3be2-49f9-999d-5ffa377c018a",
+      "name": "Think"
+    },
+    {
+      "parameters": {
+        "inputSource": "passthrough"
+      },
+      "type": "n8n-nodes-base.executeWorkflowTrigger",
+      "typeVersion": 1.1,
+      "position": [
+        -560,
+        368
+      ],
+      "id": "ee96d0ac-2660-4210-8ce6-204ff9454710",
+      "name": "Intro Analysis",
+      "alwaysOutputData": true
+    },
+    {
+      "parameters": {
+        "model": {
+          "__rl": true,
+          "value": "gpt-3.5-turbo",
+          "mode": "list",
+          "cachedResultName": "gpt-3.5-turbo"
+        },
+        "builtInTools": {},
+        "options": {
+          "temperature": 0,
+          "maxRetries": 2
+        }
+      },
+      "type": "@n8n/n8n-nodes-langchain.lmChatOpenAi",
+      "typeVersion": 1.3,
+      "position": [
+        -96,
+        560
+      ],
+      "id": "b47a6cbb-dd06-4c34-8d0b-eadaf58fc3ea",
+      "name": "OpenAI Chat Analysis",
+      "credentials": {
+        "openAiApi": {
+          "id": "yt3NGZbVrbZuYATf",
+          "name": "OpenAi account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SET NOCOUNT ON;\n\n-------------------------------------------------------------------------------\n-- CHG1) Resolver @event_id REAL (y garantizar fila padre en cec_events)\n-------------------------------------------------------------------------------\nDECLARE @event_id_input INT =\n  TRY_CONVERT(INT, NULLIF('{{ ($json.event_id ?? \"\").toString().replace(/'/g,\"''\") }}',''));\n\nDECLARE @wazuh_alert_id NVARCHAR(200) =\n  NULLIF('{{ ($json.wazuh_alert_id ?? \"\").toString().replace(/'/g,\"''\") }}','');\n\nDECLARE @event_id INT = NULL;\nDECLARE @parent_upsert_action NVARCHAR(32) = 'UNKNOWN';\n\n-- 1) Si viene event_id y EXISTE en cec_events, úsalo\nIF @event_id_input IS NOT NULL\nAND EXISTS (SELECT 1 FROM dbo.cec_events WHERE event_id = @event_id_input)\nBEGIN\n  SET @event_id = @event_id_input;\n  SET @parent_upsert_action = 'INPUT_EVENT_ID_OK';\nEND\nELSE\nBEGIN\n  -- 2) Si no existe, resolver por wazuh_alert_id\n  IF @wazuh_alert_id IS NOT NULL\n  BEGIN\n    SELECT TOP (1) @event_id = event_id\n    FROM dbo.cec_events\n    WHERE wazuh_alert_id = @wazuh_alert_id\n    ORDER BY event_id DESC;\n\n    IF @event_id IS NOT NULL\n      SET @parent_upsert_action = 'RESOLVED_BY_WAZUH_ID';\n  END\nEND\n\n-- 3) Si aún no existe padre, INSERT mínimo (para cumplir FK)\nIF @event_id IS NULL\nBEGIN\n  IF @wazuh_alert_id IS NULL\n    THROW 50002, 'Analysis: event_id not found and wazuh_alert_id is NULL', 1;\n\n  DECLARE @ins TABLE (event_id INT);\n\n  INSERT INTO dbo.cec_events (\n    campaign_id, scenario_id, wazuh_alert_id,\n    event_timestamp, ts_ingest,\n    src_ip, dst_ip, src_port, dst_port,\n    agent_name,\n    rule_id, rule_level, rule_mitre_id, rule_mitre_tactic,\n    label_wazuh, triage_priority, triage_risk, triage_severity,\n    raw_alert\n  )\n  OUTPUT inserted.event_id INTO @ins(event_id)\n  VALUES (\n    TRY_CONVERT(int, NULLIF('{{ ($json.campaign_id ?? \"\").toString().replace(/'/g,\"''\") }}','')),\n    TRY_CONVERT(int, NULLIF('{{ ($json.scenario_id ?? \"\").toString().replace(/'/g,\"''\") }}','')),\n    @wazuh_alert_id,\n\n    TRY_CONVERT(datetime2(7), NULLIF('{{ ($json.event_timestamp ?? \"\").toString().replace(/'/g,\"''\") }}','')),\n    TRY_CONVERT(datetime2(7), NULLIF('{{ ($json.ts_ingest ?? \"\").toString().replace(/'/g,\"''\") }}','')),\n\n    NULLIF('{{ ($json.src_ip ?? \"\").toString().replace(/'/g,\"''\") }}',''),\n    NULLIF('{{ ($json.dst_ip ?? \"\").toString().replace(/'/g,\"''\") }}',''),\n    TRY_CONVERT(int, NULLIF('{{ ($json.src_port ?? \"\").toString().replace(/'/g,\"''\") }}','')),\n    TRY_CONVERT(int, NULLIF('{{ ($json.dst_port ?? \"\").toString().replace(/'/g,\"''\") }}','')),\n\n    NULLIF('{{ ($json.agent_name ?? \"\").toString().replace(/'/g,\"''\") }}',''),\n\n    TRY_CONVERT(int, NULLIF('{{ ($json.rule_id ?? \"\").toString().replace(/'/g,\"''\") }}','')),\n    TRY_CONVERT(int, NULLIF('{{ ($json.rule_level ?? \"\").toString().replace(/'/g,\"''\") }}','')),\n    NULLIF('{{ ($json.rule_mitre_id ?? \"\").toString().replace(/'/g,\"''\") }}',''),\n    NULLIF('{{ ($json.rule_mitre_tactic ?? \"\").toString().replace(/'/g,\"''\") }}',''),\n\n    NULLIF('{{ ($json.label_wazuh ?? \"\").toString().replace(/'/g,\"''\") }}',''),\n    NULLIF('{{ ($json.triage_priority ?? \"\").toString().replace(/'/g,\"''\") }}',''),\n    TRY_CONVERT(float, NULLIF('{{ ($json.triage_risk ?? \"\").toString().replace(/'/g,\"''\") }}','')),\n    TRY_CONVERT(int, NULLIF('{{ ($json.triage_severity ?? \"\").toString().replace(/'/g,\"''\") }}','')),\n\n    NULLIF('{{ ($json.raw_alert ?? \"\").toString().replace(/'/g,\"''\") }}','')\n  );\n\n  SELECT TOP (1) @event_id = event_id FROM @ins;\n  SET @parent_upsert_action = 'PARENT_INSERTED';\nEND;\n\n-------------------------------------------------------------------------------\n-- A partir de aquí: tu lógica original, pero usando @event_id RESUELTO\n-------------------------------------------------------------------------------\nDECLARE @computed_at DATETIME2(7) =\n  COALESCE(\n    TRY_CONVERT(DATETIME2(7), NULLIF('{{ ($json.computed_at ?? \"\").toString().replace(/'/g,\"''\") }}','')),\n    SYSDATETIME()\n  );\n\nDECLARE @ts_start DATETIME2(7) =\n  TRY_CONVERT(DATETIME2(7), NULLIF('{{ ($json.ts_analysis_start ?? \"\").toString().replace(/'/g,\"''\") }}',''));\n\nDECLARE @ts_end DATETIME2(7) =\n  TRY_CONVERT(DATETIME2(7), NULLIF('{{ ($json.ts_analysis_end ?? \"\").toString().replace(/'/g,\"''\") }}',''));\n\nDECLARE @classification NVARCHAR(32) =\n  NULLIF('{{ (($json.classification ?? $json.analysis?.classification ?? \"\")).toString().replace(/'/g,\"''\") }}','');\n\nDECLARE @label_predicha NVARCHAR(16) =\n  NULLIF('{{ (($json.label_predicha ?? $json.analysis?.label_predicha ?? \"\")).toString().replace(/'/g,\"''\") }}','');\n\nDECLARE @severidad_predicha NVARCHAR(16) =\n  NULLIF('{{ (($json.severidad_predicha ?? $json.analysis?.severidad_predicha ?? \"\")).toString().replace(/'/g,\"''\") }}','');\n\nDECLARE @score_confidence FLOAT =\n  {{ Number.isFinite($json.score_confidence ?? $json.analysis?.score_confidence)\n      ? ($json.score_confidence ?? $json.analysis?.score_confidence)\n      : 'NULL' }};\n\nDECLARE @ai_risk_level INT =\n  {{ Number.isFinite($json.ai_risk_level ?? $json.analysis?.ai_risk_level)\n      ? ($json.ai_risk_level ?? $json.analysis?.ai_risk_level)\n      : 'NULL' }};\n\nDECLARE @mitre_technique NVARCHAR(32) =\n  NULLIF('{{ (($json.mitre_technique ?? $json.analysis?.mitre_technique ?? \"\")).toString().replace(/'/g,\"''\") }}','');\n\nDECLARE @mitre_tactic NVARCHAR(128) =\n  NULLIF('{{ (($json.mitre_tactic ?? $json.analysis?.mitre_tactic ?? \"\")).toString().replace(/'/g,\"''\") }}','');\n\n-------------------------------------------------------------------------------\n-- 1) Insert analysis_results (sin duplicado exacto)\n-------------------------------------------------------------------------------\nIF NOT EXISTS (\n  SELECT 1\n  FROM dbo.analysis_results\n  WHERE event_id = @event_id\n    AND ((ts_analysis_start = @ts_start) OR (ts_analysis_start IS NULL AND @ts_start IS NULL))\n    AND ((ts_analysis_end   = @ts_end)   OR (ts_analysis_end   IS NULL AND @ts_end   IS NULL))\n)\nBEGIN\n  INSERT INTO dbo.analysis_results (\n    event_id, ts_analysis_start, ts_analysis_end,\n    classification, label_predicha, severidad_predicha, score_confidence,\n    ai_risk_level, mitre_technique, mitre_tactic,\n    analysis\n  )\n  VALUES (\n    @event_id, @ts_start, @ts_end,\n    @classification, @label_predicha, @severidad_predicha, @score_confidence,\n    @ai_risk_level, @mitre_technique, @mitre_tactic,\n    '{{ JSON.stringify($json.analysis ?? $json).replace(/'/g,\"''\") }}'\n  );\nEND;\n\n-------------------------------------------------------------------------------\n-- 2) UPSERT fr_metrics (por event_id)\n-- CHG2) Hacer campaign/scenario/tta más robustos (TRY_CONVERT)\n-------------------------------------------------------------------------------\nDECLARE @campaign_id INT =\n  TRY_CONVERT(int, NULLIF('{{ ($json.campaign_id ?? \"\").toString().replace(/'/g,\"''\") }}',''));\n\nDECLARE @scenario_id INT =\n  TRY_CONVERT(int, NULLIF('{{ ($json.scenario_id ?? \"\").toString().replace(/'/g,\"''\") }}',''));\n\nDECLARE @tta_sec INT =\n  TRY_CONVERT(int, NULLIF('{{ ($json.tta_sec ?? \"\").toString().replace(/'/g,\"''\") }}',''));\n\nIF EXISTS (SELECT 1 FROM dbo.fr_metrics WHERE event_id = @event_id)\nBEGIN\n  UPDATE dbo.fr_metrics\n  SET\n    campaign_id = COALESCE(@campaign_id, campaign_id),\n    scenario_id = COALESCE(@scenario_id, scenario_id),\n    metric_scope = COALESCE(NULLIF('{{ ($json.metric_scope ?? \"event\").toString().replace(/'/g,\"''\") }}',''), metric_scope),\n\n    ts_ingest = COALESCE(\n      TRY_CONVERT(DATETIME2(7), NULLIF('{{ ($json.ts_ingest ?? \"\").toString().replace(/'/g,\"''\") }}','')),\n      ts_ingest\n    ),\n    ts_analysis_start = COALESCE(@ts_start, ts_analysis_start),\n    ts_analysis_end   = COALESCE(@ts_end, ts_analysis_end),\n\n    tta_sec = COALESCE(@tta_sec, tta_sec),\n\n    label_predicha = COALESCE(@label_predicha, label_predicha),\n    severidad_predicha = COALESCE(@severidad_predicha, severidad_predicha),\n    score_confidence = COALESCE(@score_confidence, score_confidence),\n\n    computed_at = @computed_at,\n    metrics_json = '{{ JSON.stringify($json).replace(/'/g,\"''\") }}'\n  WHERE event_id = @event_id;\n\n  -- CHG3) output con info útil\n  SELECT @event_id AS event_id, 'UPDATED' AS fr_metrics_action, @parent_upsert_action AS parent_action;\nEND\nELSE\nBEGIN\n  INSERT INTO dbo.fr_metrics (\n    event_id, campaign_id, scenario_id, metric_scope,\n    ts_ingest, ts_analysis_start, ts_analysis_end,\n    tta_sec,\n    label_predicha, severidad_predicha, score_confidence,\n    computed_at, metrics_json\n  )\n  VALUES (\n    @event_id,\n    @campaign_id,\n    @scenario_id,\n    NULLIF('{{ ($json.metric_scope ?? \"event\").toString().replace(/'/g,\"''\") }}',''),\n\n    TRY_CONVERT(DATETIME2(7), NULLIF('{{ ($json.ts_ingest ?? \"\").toString().replace(/'/g,\"''\") }}','')),\n    @ts_start,\n    @ts_end,\n\n    @tta_sec,\n\n    @label_predicha,\n    @severidad_predicha,\n    @score_confidence,\n\n    @computed_at,\n    '{{ JSON.stringify($json).replace(/'/g,\"''\") }}'\n  );\n\n  -- CHG3) output con info útil\n  SELECT @event_id AS event_id, 'INSERTED' AS fr_metrics_action, @parent_upsert_action AS parent_action;\nEND;\n\n\n"
+      },
+      "type": "n8n-nodes-base.microsoftSql",
+      "typeVersion": 1.1,
+      "position": [
+        432,
+        368
+      ],
+      "id": "bc7b0499-2844-4c62-9077-fa56088151b6",
+      "name": "Upsert fr_metrics",
+      "alwaysOutputData": false,
+      "credentials": {
+        "microsoftSql": {
+          "id": "59sSXaGtmRRjhh5e",
+          "name": "Microsoft SQL account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const j = $json ?? {};\nconst event = j.event ?? j.input ?? j.payload ?? j;\n\nreturn [{\n  json: {\n    ...event\n  }\n}];\n"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -384,
+        368
+      ],
+      "id": "a44b6965-3f4e-4f18-8397-e09863c87646",
+      "name": "Input unwrap"
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "ts_analysis_start": {
+      "main": [
+        [
+          {
+            "node": "Analysis",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "ts_analysis_end+tta": {
+      "main": [
+        [
+          {
+            "node": "Upsert fr_metrics",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Return final event": {
+      "main": [
+        []
+      ]
+    },
+    "Analysis": {
+      "main": [
+        [
+          {
+            "node": "ts_analysis_end+tta",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Think": {
+      "ai_tool": [
+        [
+          {
+            "node": "Analysis",
+            "type": "ai_tool",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Intro Analysis": {
+      "main": [
+        [
+          {
+            "node": "Input unwrap",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "OpenAI Chat Analysis": {
+      "ai_languageModel": [
+        [
+          {
+            "node": "Analysis",
+            "type": "ai_languageModel",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Upsert fr_metrics": {
+      "main": [
+        [
+          {
+            "node": "Return final event",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Input unwrap": {
+      "main": [
+        [
+          {
+            "node": "ts_analysis_start",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": true,
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "versionId": "12546a63-d52f-4500-9af8-0bf78427612f",
+  "meta": {
+    "instanceId": "5f4321b383184a4332b5d1e5cb6e70ea61441780fd28eb1fe8c95676a3e6f306"
+  },
+  "id": "RbwZ2h03ngEjTubg",
+  "tags": []
+}

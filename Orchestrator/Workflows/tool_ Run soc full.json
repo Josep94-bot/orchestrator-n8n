@@ -1,0 +1,258 @@
+{
+  "name": "tool: Run soc full",
+  "nodes": [
+    {
+      "parameters": {
+        "inputSource": "passthrough"
+      },
+      "type": "n8n-nodes-base.executeWorkflowTrigger",
+      "typeVersion": 1.1,
+      "position": [
+        -592,
+        0
+      ],
+      "id": "a96b516f-ee92-484f-8095-d9fe7c62fdb3",
+      "name": "Intro tool_run_soc_full",
+      "alwaysOutputData": true
+    },
+    {
+      "parameters": {
+        "jsCode": "// ✅ tool_input_unwrap (patch: soporta query con JSON string)\nfunction stripFences(s) {\n  if (typeof s !== \"string\") return s;\n  return s\n    .replace(/```json\\s*([\\s\\S]*?)\\s*```/gi, \"$1\")\n    .replace(/```\\s*([\\s\\S]*?)\\s*```/g, \"$1\")\n    .trim();\n}\n\nfunction safeParse(maybe) {\n  if (maybe == null) return null;\n  if (typeof maybe === \"object\") return maybe;\n  if (typeof maybe !== \"string\") return null;\n\n  const s0 = stripFences(maybe);\n  if (!s0) return null;\n\n  try { return JSON.parse(s0); } catch {}\n\n  const fo = s0.indexOf(\"{\");\n  const lo = s0.lastIndexOf(\"}\");\n  if (fo !== -1 && lo !== -1 && lo > fo) {\n    try { return JSON.parse(s0.slice(fo, lo + 1)); } catch {}\n  }\n\n  return null;\n}\n\nconst j = $json ?? {};\n\n// 👇 AÑADIDO: incluir query como posible fuente del evento\nconst candidate = j.event ?? j.input ?? j.payload ?? j.query ?? j;\n\n// 1) candidate puede ser string JSON o un wrapper\nlet event = safeParse(candidate) ?? candidate;\n\n// 👇 AÑADIDO: si llega como objeto con query:string que contiene el evento real\nif (event && typeof event === \"object\" && typeof event.query === \"string\") {\n  const parsedQ = safeParse(event.query);\n  if (parsedQ && typeof parsedQ === \"object\") {\n    // parsedQ pisa nulls del wrapper (ej: event_id:null)\n    event = { ...event, ...parsedQ };\n    // opcional: conservar raw\n    event.input_query_raw = event.query;\n    delete event.query;\n  }\n}\n\n// 2) merge wrapper metadata + evento\nconst merged = { ...j, ...event };\ndelete merged.event;\ndelete merged.input;\ndelete merged.payload;\n\n// 3) event_id: NO lo fuerces a null si ya vino desde query\nif (merged.event_id !== undefined && merged.event_id !== null && String(merged.event_id).trim() !== \"\") {\n  const n = Number(merged.event_id);\n  merged.event_id = Number.isFinite(n) ? n : merged.event_id;\n} else {\n  merged.event_id = null;\n  merged.needs_event_id = true;\n}\n\nreturn [{ json: merged }];\n\n"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -416,
+        0
+      ],
+      "id": "431218ad-78a3-42de-ae30-2b73573c2d88",
+      "name": "Input unwrap",
+      "alwaysOutputData": true
+    },
+    {
+      "parameters": {
+        "workflowId": {
+          "__rl": true,
+          "value": "wzhRigymIVIwiaFi",
+          "mode": "list",
+          "cachedResultUrl": "/workflow/wzhRigymIVIwiaFi",
+          "cachedResultName": "Monitoring"
+        },
+        "workflowInputs": {
+          "mappingMode": "defineBelow",
+          "value": {},
+          "matchingColumns": [],
+          "schema": [],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": true
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1.3,
+      "position": [
+        -256,
+        0
+      ],
+      "id": "ba4183da-2ba5-4ee2-9058-591c0e24bdd0",
+      "name": "Monitoring",
+      "alwaysOutputData": true
+    },
+    {
+      "parameters": {
+        "workflowId": {
+          "__rl": true,
+          "value": "RbwZ2h03ngEjTubg",
+          "mode": "list",
+          "cachedResultUrl": "/workflow/RbwZ2h03ngEjTubg",
+          "cachedResultName": "Analysis"
+        },
+        "workflowInputs": {
+          "mappingMode": "defineBelow",
+          "value": {},
+          "matchingColumns": [],
+          "schema": [],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": true
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1.3,
+      "position": [
+        -48,
+        0
+      ],
+      "id": "356186f5-3ef2-4651-9507-99e0ce280241",
+      "name": "Analysis",
+      "alwaysOutputData": true
+    },
+    {
+      "parameters": {
+        "workflowId": {
+          "__rl": true,
+          "value": "OUJYYQwzmpM1R3SM",
+          "mode": "list",
+          "cachedResultUrl": "/workflow/OUJYYQwzmpM1R3SM",
+          "cachedResultName": "Response"
+        },
+        "workflowInputs": {
+          "mappingMode": "defineBelow",
+          "value": {},
+          "matchingColumns": [],
+          "schema": [],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": true
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1.3,
+      "position": [
+        160,
+        0
+      ],
+      "id": "35314a10-a7c2-4ffc-9e49-1440624a536a",
+      "name": "Response",
+      "alwaysOutputData": true
+    },
+    {
+      "parameters": {
+        "workflowId": {
+          "__rl": true,
+          "value": "Tc0QeA1pYB7EB8Ii",
+          "mode": "list",
+          "cachedResultUrl": "/workflow/Tc0QeA1pYB7EB8Ii",
+          "cachedResultName": "ResponseExecute"
+        },
+        "workflowInputs": {
+          "mappingMode": "defineBelow",
+          "value": {},
+          "matchingColumns": [],
+          "schema": [],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": true
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1.3,
+      "position": [
+        384,
+        0
+      ],
+      "id": "3942d880-0267-4060-9c04-db50b285c9d4",
+      "name": "ResponseExecute",
+      "alwaysOutputData": true
+    },
+    {
+      "parameters": {
+        "workflowId": {
+          "__rl": true,
+          "value": "gpCZgvKagyZnksc2",
+          "mode": "list",
+          "cachedResultUrl": "/workflow/gpCZgvKagyZnksc2",
+          "cachedResultName": "Summarizer"
+        },
+        "workflowInputs": {
+          "mappingMode": "defineBelow",
+          "value": {},
+          "matchingColumns": [],
+          "schema": [],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": true
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1.3,
+      "position": [
+        592,
+        0
+      ],
+      "id": "627e6789-2767-42e4-9b20-d2b31505d4d1",
+      "name": "Summarizer",
+      "alwaysOutputData": true,
+      "onError": "continueErrorOutput"
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "Intro tool_run_soc_full": {
+      "main": [
+        [
+          {
+            "node": "Input unwrap",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Input unwrap": {
+      "main": [
+        [
+          {
+            "node": "Monitoring",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Monitoring": {
+      "main": [
+        [
+          {
+            "node": "Analysis",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Analysis": {
+      "main": [
+        [
+          {
+            "node": "Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Response": {
+      "main": [
+        [
+          {
+            "node": "ResponseExecute",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "ResponseExecute": {
+      "main": [
+        [
+          {
+            "node": "Summarizer",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": true,
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "versionId": "f7da5fb2-a233-4e82-974e-15dc3cb32301",
+  "meta": {
+    "instanceId": "5f4321b383184a4332b5d1e5cb6e70ea61441780fd28eb1fe8c95676a3e6f306"
+  },
+  "id": "hkA1ALVXNbW3Memf",
+  "tags": []
+}

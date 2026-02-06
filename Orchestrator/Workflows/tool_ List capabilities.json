@@ -1,0 +1,55 @@
+{
+  "name": "tool: List capabilities",
+  "nodes": [
+    {
+      "parameters": {
+        "jsCode": "// tool_list_capabilities - catálogo central (robusto a inputs)\n// Acepta: $json.query o $json.input o $json.chatInput\n\nconst q = ($json.query ?? $json.input ?? $json.chatInput ?? '').toString().trim();\n\n// Canonicalización mínima para evitar desalineación histórica:\nconst CANONICAL_WORKFLOW = {\n  ResponsePlan: 'Response',\n  'ResponsePlan.json': 'Response'\n};\nconst canonicalize = (name) => CANONICAL_WORKFLOW[name] ?? name;\n\nconst capabilities = {\n  ok: true,\n\n  // Tools que el Agent puede invocar (nombres CANONICAL del Inspector)\n  tools: [\n    {\n      name: 'tool: list_capabilities',\n      aliases: ['tool_list_capabilities', 'tool: List capabilities'],\n      purpose: 'Lista tools/workflows disponibles y qué esperan/devuelven.',\n      expected_input: { input: 'string (opcional)', query: 'string (opcional)', chatInput: 'string (opcional)' },\n      returns: { ok: 'boolean', tools: 'array', workflows: 'array', output: 'string' }\n    },\n    {\n      name: 'tool: explain_workflow',\n      aliases: ['tool_explain_workflow', 'tool: Explain workflow'],\n      purpose: 'Explica un workflow por nombre (propósito, inputs/outputs, nodos, fallos comunes).',\n      expected_input: { input: 'string (nombre del workflow)' },\n      returns: { ok: 'boolean', received: 'string', available: 'array', output: 'string' }\n    },\n    {\n      name: 'tool: query_metrics',\n      aliases: ['tool_query_metrics', 'tool: Query metrics', 'tool: Query metrics'],\n      purpose: 'Consulta eventos/métricas en BD (eventos recientes, ventanas de tiempo, filtros por métricas).',\n      expected_input: { input: 'string (pregunta completa del usuario)' },\n      returns: { ok: 'boolean', summary: 'object', rows: 'array', text: 'string' }\n    },\n\n    // Tools/acciones del Router (nombres CANONICAL del Inspector)\n    {\n      name: 'tool: run_soc_full',\n      aliases: ['tool_run_soc_full', 'tool: Run soc full', 'tool_run_soc_full.json'],\n      purpose: 'Ejecuta el pipeline completo SOC (Monitoring → Analysis → Response → tool:ResponseExecute).',\n      expected_input: { input: 'string (contexto/pregunta opcional)' },\n      returns: { ok: 'boolean', result: 'object', output: 'string' }\n    },\n    {\n      name: 'tool:ResponseExecute',\n      aliases: ['ResponseExecute', 'ResponseExecute.json', 'tool_execute_action', 'tool_execute_action.json'],\n      purpose: 'Ejecuta acción (firewall/notify/etc) y registra evidencia/métricas.',\n      expected_input: { input: 'object (CASE con response_plan + targets)' },\n      returns: { ok: 'boolean', status: 'string', evidence: 'object|array', output: 'string' }\n    },\n    {\n      name: 'tool:Block / Unblock IP + Port',\n      // Alias incluye tu nombre actual de nodo/workflow\n      aliases: ['tool:Block/Unblock IP + port', 'Block-Unblock IP +Port', 'Block-Unblock IP +Port.json'],\n      purpose: 'Bloquea o desbloquea una IP y/o puerto en el control correspondiente.',\n      expected_input: { ip: 'string', port: 'number|string (opcional)', action: '\"block\"|\"unblock\"', reason: 'string (opcional)' },\n      returns: { ok: 'boolean', action: 'string', status: 'string', details: 'object' }\n    },\n    {\n      name: 'Register/Unregister Suspicious IP',\n      // Alias incluye tu nodo actual \"Malicious IP\" y el json del workflow\n      aliases: ['Register/Unregister Malicious IP', 'Register_Unregister Suspicious IP.json'],\n      purpose: 'Registra o desregistra una IP como sospechosa (IOC/denylist/allowlist según implementación).',\n      expected_input: { ip: 'string', action: '\"register\"|\"unregister\"', reason: 'string (opcional)' },\n      returns: { ok: 'boolean', action: 'string', status: 'string', details: 'object' }\n    },\n    {\n      name: 'Summarizer',\n      aliases: ['tool_summarizer', 'Summarizer.json'],\n      purpose: 'Resume hallazgos/resultados del pipeline (salida orientada a humano).',\n      expected_input: { input: 'string|object (resultado a resumir)' },\n      returns: { ok: 'boolean', summary: 'string', output: 'string' }\n    },\n\n    // Think existe como tool interno del Agent (lo listamos solo informativo)\n    {\n      name: 'Think',\n      aliases: ['toolThink', 'planner'],\n      purpose: 'Planner interno (no ejecuta herramientas). Solo decide scope/steps en JSON.',\n      expected_input: { input: 'object (CASE + user text)' },\n      returns: { execution: 'object', steps: 'array', case_contract: 'object', stop_conditions: 'array' }\n    }\n  ],\n\n  // Workflows (etapas/piezas del sistema)\n  workflows: [\n    { name: 'Monitoring', aliases: ['Monitoring.json'], writes: ['dbo.cec_events'], operation: 'INSERT' },\n    { name: 'Analysis', aliases: ['Analysis.json'], writes: ['dbo.analysis_results'], operation: 'INSERT (versionado)' },\n\n    // Canonical: Response (mantener legacy ResponsePlan en aliases)\n    { name: 'Response', aliases: ['Response.json', 'ResponsePlan', 'ResponsePlan.json'], writes: ['dbo.response_plan'], operation: 'UPSERT' },\n\n    { name: 'ResponseExecute', aliases: ['ResponseExecute.json', 'tool:ResponseExecute'], writes: ['dbo.response_execution', 'dbo.fr_metrics'], operation: 'INSERT/UPSERT' },\n\n    { name: 'tool_run_soc_full', aliases: ['tool: run_soc_full', 'tool: Run soc full'], writes: [], operation: 'orquestación' },\n    { name: 'Block-Unblock IP +Port', aliases: ['tool:Block / Unblock IP + Port', 'tool:Block/Unblock IP + port'], writes: [], operation: 'acción externa' },\n    { name: 'Register/Unregister Suspicious IP', aliases: ['Register/Unregister Malicious IP'], writes: [], operation: 'acción externa' },\n    { name: 'Summarizer', aliases: ['Summarizer.json'], writes: [], operation: 'N/A' },\n\n    { name: 'SOC Inspector Router', aliases: ['SOC Inspector Router.json'], writes: [], operation: 'N/A' }\n  ],\n\n  // Para sugerencias rápidas\n  available_workflows: [\n    'Monitoring',\n    'Analysis',\n    'Response',\n    'ResponseExecute',\n    'tool_run_soc_full',\n    'Block-Unblock IP +Port',\n    'Register/Unregister Suspicious IP',\n    'Summarizer',\n    'SOC Inspector Router'\n  ],\n  available_tools: [\n    'Think',\n    'tool: run_soc_full',\n    'Monitoring',\n    'Analysis',\n    'Response',\n    'tool:ResponseExecute',\n    'tool:Block / Unblock IP + Port',\n    'Register/Unregister Suspicious IP',\n    'Summarizer',\n    'tool: list_capabilities',\n    'tool: explain_workflow',\n    'tool: query_metrics'\n  ]\n};\n\nconst lines = [];\nlines.push('CAPABILITIES (resumen):');\nlines.push(`- tools: ${capabilities.available_tools.join(' | ')}`);\nlines.push(`- workflows: ${capabilities.available_workflows.join(' | ')}`);\n\nif (q) {\n  const cq = canonicalize(q);\n  lines.push(`Consulta recibida: ${q}${cq !== q ? ` (canonical: ${cq})` : ''}`);\n}\n\nreturn [\n  {\n    json: {\n      ...capabilities,\n      query_received: q || null,\n      output: lines.join('\\n')\n    }\n  }\n];\n"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -112,
+        -64
+      ],
+      "id": "9b5aa8d5-e361-422d-93b5-ef78a00b5ae1",
+      "name": "Build capabilities catalog"
+    },
+    {
+      "parameters": {
+        "inputSource": "passthrough"
+      },
+      "type": "n8n-nodes-base.executeWorkflowTrigger",
+      "typeVersion": 1.1,
+      "position": [
+        -304,
+        -64
+      ],
+      "id": "74ab60d2-ef0f-44e2-9365-cd3c35a4072c",
+      "name": "Intro list capabilities"
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "Intro list capabilities": {
+      "main": [
+        [
+          {
+            "node": "Build capabilities catalog",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": true,
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "versionId": "4dc25672-87cd-446d-9d19-c0dc8cdd2bbe",
+  "meta": {
+    "instanceId": "5f4321b383184a4332b5d1e5cb6e70ea61441780fd28eb1fe8c95676a3e6f306"
+  },
+  "id": "v8EwqLhB7Mp4KvPp",
+  "tags": []
+}

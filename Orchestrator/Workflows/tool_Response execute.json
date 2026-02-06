@@ -1,0 +1,839 @@
+{
+  "name": "tool:Response execute",
+  "nodes": [
+    {
+      "parameters": {
+        "jsCode": "// ts_hitl_start\nconst nowIso = new Date().toISOString();\n\nreturn $input.all().map(item => {\n  const j = item.json ?? {};\n  return {\n    json: {\n      ...j,\n      ts_hitl_start: j.ts_hitl_start || nowIso\n    }\n  };\n});\n"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -1568,
+        432
+      ],
+      "id": "99fa1140-720f-401d-8ffa-9896c8f98fe3",
+      "name": "ts_hitl_start"
+    },
+    {
+      "parameters": {
+        "jsCode": "// ts_response_start\nconst nowIso = new Date().toISOString();\n\nreturn $input.all().map(item => {\n  const j = item.json ?? {};\n  return {\n    json: {\n      ...j,\n      ts_response_start: j.ts_response_start || nowIso\n    }\n  };\n});\n"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -704,
+        592
+      ],
+      "id": "e24bcf42-e4aa-4021-8452-bf4bf92c84c3",
+      "name": "ts_response_start"
+    },
+    {
+      "parameters": {
+        "jsCode": "// ts_response_end+mttr (v2) — preserva evento aunque venga respuesta de Telegram\n\nconst nowIso = new Date().toISOString();\n\nconst parseMs = (s) => {\n  const t = Date.parse(s);\n  return Number.isFinite(t) ? t : null;\n};\n\nconst safeItems = (nodeName) => {\n  try { return $items(nodeName); } catch (e) { return null; }\n};\n\n// Intentar recuperar el evento original desde el nodo anterior a Notify\n// (en tu flujo: Build msg Telegram → Notify → ts_response_end+mttr)\nconst baseItems =\n  safeItems(\"Build msg Telegram\") ||\n  safeItems(\"ts_response_start1\") ||\n  safeItems(\"ts_response_start\") ||\n  null;\n\nreturn $input.all().map((item, idx) => {\n  const cur = item.json ?? {};\n\n  const base =\n    baseItems?.[idx]?.json ??\n    baseItems?.[0]?.json ??\n    {};\n\n  // Si base está vacío, asumimos que cur sí es el evento\n  const hasBase = base && Object.keys(base).length > 0;\n  const event = hasBase ? base : cur;\n\n  // Si venimos desde Notify, cur suele ser la respuesta de Telegram\n  const telegramSend = hasBase ? cur : (event.telegram_send ?? undefined);\n\n  const tsStart =\n    event.ts_response_start ||\n    event.ts_hitl_end ||\n    event.ts_analysis_end ||\n    event.ts_ingest ||\n    event.event_timestamp ||\n    \"\";\n\n  const startMs = parseMs(tsStart);\n  const endMs = parseMs(nowIso);\n  const mttrSec = (startMs && endMs) ? Math.round((endMs - startMs) / 1000) : 0;\n\n  return {\n    json: {\n      ...event,\n      // Trazabilidad: si hubo Notify, guardamos su respuesta\n      ...(telegramSend ? { telegram_send: telegramSend } : {}),\n      ts_response_end: nowIso,\n      mttr_sec: event.mttr_sec ?? mttrSec,\n    }\n  };\n});\n\n"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        672,
+        512
+      ],
+      "id": "6d5f160f-0915-4407-8738-d038d5a317f4",
+      "name": "ts_response_end+mttr"
+    },
+    {
+      "parameters": {
+        "jsCode": "// ts_hitl_end (FIX) -> une evento original (ts_hitl_start) + decisión HITL\nconst nowIso = new Date().toISOString();\n\nconst parseMs = (s) => {\n  const t = Date.parse(s);\n  return Number.isFinite(t) ? t : null;\n};\n\nconst normalizeDecision = (x) => {\n  const s = (x ?? \"\").toString().trim();\n  if (!s) return \"Sin respuesta\";\n  const low = s.toLowerCase();\n  if ([\"aprobar\", \"approve\", \"yes\", \"si\", \"sí\"].includes(low)) return \"Aprobar\";\n  if ([\"denegar\", \"rechazar\", \"deny\", \"no\"].includes(low)) return \"Denegar\";\n  return s;\n};\n\n// Evento completo antes del WAIT (incluye response_plan.playbook)\nconst baseItems = $items(\"ts_hitl_start\");\n\nreturn $input.all().map((item, idx) => {\n  const base = baseItems[idx]?.json ?? baseItems[0]?.json ?? {};\n  const hitl = item.json ?? {};\n\n  const decisionRaw = hitl.data?.decision ?? hitl.decision ?? \"\";\n  const decision = normalizeDecision(decisionRaw);\n\n  const tsStart =\n    base.ts_hitl_start ||\n    base.ts_analysis_end ||\n    base.ts_analysis_start ||\n    base.ts_ingest ||\n    base.event_timestamp ||\n    \"\";\n\n  const startMs = parseMs(tsStart);\n  const endMs = parseMs(nowIso);\n  const waitSec = (startMs && endMs) ? Math.round((endMs - startMs) / 1000) : 0;\n\n  return {\n    json: {\n      ...base,                 // 👈 preserva response_plan/playbook/event_id/src_ip/etc\n      decision,                // 👈 agrega decisión\n      hitl_timeout: hitl.hitl_timeout ?? false,\n      ts_hitl_end: nowIso,\n      hitl_wait_sec: hitl.hitl_wait_sec ?? waitSec,\n      hitl_raw: hitl,          // opcional (trazabilidad)\n      human_in_loop: true,\n    },\n  };\n});\n\n"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -1088,
+        432
+      ],
+      "id": "f2a1aaf1-8248-46a3-8cd0-2f62da6b05a2",
+      "name": "ts_hitl_end"
+    },
+    {
+      "parameters": {
+        "operation": "sendAndWait",
+        "chatId": "6340620540",
+        "message": "={{ $json.telegram_text }}",
+        "responseType": "customForm",
+        "formFields": {
+          "values": [
+            {
+              "fieldLabel": "decision",
+              "fieldType": "radio",
+              "fieldOptions": {
+                "values": [
+                  {
+                    "option": "Aprobar"
+                  },
+                  {
+                    "option": "Denegar"
+                  }
+                ]
+              }
+            }
+          ]
+        },
+        "options": {
+          "limitWaitTime": {
+            "values": {
+              "resumeUnit": "minutes"
+            }
+          }
+        }
+      },
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [
+        -1232,
+        432
+      ],
+      "id": "ba9a38fc-25eb-486c-be18-959921a85e12",
+      "name": "Message HITL",
+      "webhookId": "71fbd29b-35da-4988-b0b8-48f627b03165",
+      "alwaysOutputData": true,
+      "credentials": {
+        "telegramApi": {
+          "id": "2SmrbhySGPb1qAlr",
+          "name": "Telegram account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 3
+          },
+          "conditions": [
+            {
+              "id": "381b3884-edff-4bbb-a065-1676c438fb30",
+              "leftValue": "={{ !!($json.src_ip || $json.raw?.data?.srcip) }}",
+              "rightValue": "",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        -512,
+        592
+      ],
+      "id": "5fa54f5b-efb4-43ef-b0c2-21f86de6a927",
+      "name": "src_ip exists",
+      "alwaysOutputData": false
+    },
+    {
+      "parameters": {
+        "chatId": "6340620540",
+        "text": "={{ $json.telegram_text }}\n",
+        "additionalFields": {
+          "disable_web_page_preview": true
+        }
+      },
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [
+        480,
+        512
+      ],
+      "id": "4af0952f-14f2-4a7c-98c1-280cb33fc6e6",
+      "name": "Notify",
+      "webhookId": "5a1f28ff-6663-4850-a67c-649def6cb1a9",
+      "alwaysOutputData": true,
+      "credentials": {
+        "telegramApi": {
+          "id": "2SmrbhySGPb1qAlr",
+          "name": "Telegram account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 3
+          },
+          "conditions": [
+            {
+              "id": "ce405f4c-ed76-4ee9-a53f-dbe44d822b2e",
+              "leftValue": "={{ $json.response_plan.requires_approval }}",
+              "rightValue": "true",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {
+          "ignoreCase": false
+        }
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        -1776,
+        576
+      ],
+      "id": "0ba0902d-41de-4fd9-9df8-faa66fd44e2a",
+      "name": "HITL Decision",
+      "alwaysOutputData": false
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SET NOCOUNT ON;\n\n------------------------------------------------------------\n-- 0) event_id obligatorio\n------------------------------------------------------------\nDECLARE @event_id INT =\n  TRY_CONVERT(INT, NULLIF('{{ ($json.event_id ?? \"\").toString().replace(/'/g,\"''\") }}',''));\n\nIF @event_id IS NULL\nBEGIN\n  SELECT\n    NULL AS event_id,\n    0 AS rows_for_event,\n    'skipped_metrics_no_event_id' AS status;\n  RETURN;\nEND;\n\n------------------------------------------------------------\n-- 1) Helpers: strings crudos (para parsear bien Z / offsets)\n------------------------------------------------------------\nDECLARE @ts_ingest_str NVARCHAR(64) =\n  NULLIF('{{ ($json.ts_ingest ?? \"\").toString().replace(/'/g,\"''\") }}','');\n\nDECLARE @ts_analysis_start_str NVARCHAR(64) =\n  NULLIF('{{ ($json.ts_analysis_start ?? \"\").toString().replace(/'/g,\"''\") }}','');\n\nDECLARE @ts_analysis_end_str NVARCHAR(64) =\n  NULLIF('{{ ($json.ts_analysis_end ?? \"\").toString().replace(/'/g,\"''\") }}','');\n\nDECLARE @ts_hitl_start_str NVARCHAR(64) =\n  NULLIF('{{ ($json.ts_hitl_start ?? \"\").toString().replace(/'/g,\"''\") }}','');\n\nDECLARE @ts_hitl_end_str NVARCHAR(64) =\n  NULLIF('{{ ($json.ts_hitl_end ?? \"\").toString().replace(/'/g,\"''\") }}','');\n\nDECLARE @ts_response_start_str NVARCHAR(64) =\n  NULLIF('{{ ($json.ts_response_start ?? \"\").toString().replace(/'/g,\"''\") }}','');\n\nDECLARE @ts_response_end_str NVARCHAR(64) =\n  NULLIF('{{ ($json.ts_response_end ?? \"\").toString().replace(/'/g,\"''\") }}','');\n\n------------------------------------------------------------\n-- 2) Parse robusto de timestamps (ISO con Z)\n------------------------------------------------------------\nDECLARE @ts_ingest DATETIME2(7) =\n  COALESCE(\n    TRY_CONVERT(DATETIME2(7), @ts_ingest_str),\n    TRY_CONVERT(DATETIME2(7), TRY_CONVERT(DATETIMEOFFSET(7), REPLACE(@ts_ingest_str,'Z','+00:00')))\n  );\n\nDECLARE @ts_analysis_start DATETIME2(7) =\n  COALESCE(\n    TRY_CONVERT(DATETIME2(7), @ts_analysis_start_str),\n    TRY_CONVERT(DATETIME2(7), TRY_CONVERT(DATETIMEOFFSET(7), REPLACE(@ts_analysis_start_str,'Z','+00:00')))\n  );\n\nDECLARE @ts_analysis_end DATETIME2(7) =\n  COALESCE(\n    TRY_CONVERT(DATETIME2(7), @ts_analysis_end_str),\n    TRY_CONVERT(DATETIME2(7), TRY_CONVERT(DATETIMEOFFSET(7), REPLACE(@ts_analysis_end_str,'Z','+00:00')))\n  );\n\nDECLARE @ts_hitl_start DATETIME2(7) =\n  COALESCE(\n    TRY_CONVERT(DATETIME2(7), @ts_hitl_start_str),\n    TRY_CONVERT(DATETIME2(7), TRY_CONVERT(DATETIMEOFFSET(7), REPLACE(@ts_hitl_start_str,'Z','+00:00')))\n  );\n\nDECLARE @ts_hitl_end DATETIME2(7) =\n  COALESCE(\n    TRY_CONVERT(DATETIME2(7), @ts_hitl_end_str),\n    TRY_CONVERT(DATETIME2(7), TRY_CONVERT(DATETIMEOFFSET(7), REPLACE(@ts_hitl_end_str,'Z','+00:00')))\n  );\n\nDECLARE @ts_response_start DATETIME2(7) =\n  COALESCE(\n    TRY_CONVERT(DATETIME2(7), @ts_response_start_str),\n    TRY_CONVERT(DATETIME2(7), TRY_CONVERT(DATETIMEOFFSET(7), REPLACE(@ts_response_start_str,'Z','+00:00')))\n  );\n\nDECLARE @ts_response_end DATETIME2(7) =\n  COALESCE(\n    TRY_CONVERT(DATETIME2(7), @ts_response_end_str),\n    TRY_CONVERT(DATETIME2(7), TRY_CONVERT(DATETIMEOFFSET(7), REPLACE(@ts_response_end_str,'Z','+00:00'))),\n    SYSUTCDATETIME()\n  );\n\n------------------------------------------------------------\n-- 3) Números y strings\n------------------------------------------------------------\nDECLARE @campaign_id INT =\n  TRY_CONVERT(INT, NULLIF('{{ ($json.campaign_id ?? \"\").toString().replace(/'/g,\"''\") }}',''));\n\nDECLARE @scenario_id INT =\n  TRY_CONVERT(INT, NULLIF('{{ ($json.scenario_id ?? \"\").toString().replace(/'/g,\"''\") }}',''));\n\nDECLARE @metric_scope NVARCHAR(32) =\n  NULLIF('{{ ($json.metric_scope ?? \"event\").toString().replace(/'/g,\"''\") }}','');\n\nDECLARE @tta_sec INT =\n  TRY_CONVERT(INT, NULLIF('{{ ($json.tta_sec ?? \"\").toString().replace(/'/g,\"''\") }}',''));\n\nDECLARE @mttr_sec INT =\n  TRY_CONVERT(INT, NULLIF('{{ ($json.mttr_sec ?? \"\").toString().replace(/'/g,\"''\") }}',''));\n\nDECLARE @hitl_wait_seconds INT =\n  TRY_CONVERT(INT, NULLIF('{{ ($json.hitl_wait_sec ?? $json.hitl_wait_seconds ?? \"\").toString().replace(/'/g,\"''\") }}',''));\n\nDECLARE @label_predicha NVARCHAR(64) =\n  NULLIF('{{ ($json.label_predicha ?? \"\").toString().replace(/'/g,\"''\") }}','');\n\nDECLARE @severidad_predicha NVARCHAR(64) =\n  NULLIF('{{ ($json.severidad_predicha ?? \"\").toString().replace(/'/g,\"''\") }}','');\n\nDECLARE @score_confidence FLOAT =\n  TRY_CONVERT(FLOAT, NULLIF('{{ ($json.score_confidence ?? \"\").toString().replace(/'/g,\"''\") }}',''));\n\nDECLARE @playbook NVARCHAR(128) =\n  NULLIF('{{ ($json.response_plan?.playbook ?? $json.playbook ?? \"\").toString().replace(/'/g,\"''\") }}','');\n\nDECLARE @selected_option NVARCHAR(2) =\n  NULLIF('{{ ($json.response_plan?.selected_option ?? \"\").toString().replace(/'/g,\"''\") }}','');\n\nDECLARE @hitl_decision NVARCHAR(32) =\n  NULLIF('{{ ($json.decision ?? $json.hitl_raw?.data?.decision ?? \"\").toString().replace(/'/g,\"''\") }}','');\n\nDECLARE @action_type NVARCHAR(128) =\n  NULLIF('{{ ($json.response_plan?.actions?.[0]?.type ?? $json.response_plan?.playbook ?? \"\").toString().replace(/'/g,\"''\") }}','');\n\nDECLARE @action_status NVARCHAR(64) =\n  NULLIF('{{ ($json.response_outcome ?? $json.wazuh_response ?? \"\").toString().replace(/'/g,\"''\") }}','');\n\n------------------------------------------------------------\n-- 4) Booleans robustos (acepta true/false, \"true\"/\"false\", 1/0)\n------------------------------------------------------------\nDECLARE @requires_approval_str NVARCHAR(16) =\n  LOWER(NULLIF('{{ ($json.response_plan?.requires_approval ?? \"\").toString().replace(/'/g,\"''\") }}',''));\n\nDECLARE @hitl_timeout_str NVARCHAR(16) =\n  LOWER(NULLIF('{{ ($json.hitl_timeout ?? \"\").toString().replace(/'/g,\"''\") }}',''));\n\nDECLARE @requires_approval BIT =\n  CASE\n    WHEN @requires_approval_str IN ('true','1','yes','si','sí') THEN 1\n    WHEN @requires_approval_str IN ('false','0','no') THEN 0\n    ELSE NULL\n  END;\n\nDECLARE @hitl_timeout BIT =\n  CASE\n    WHEN @hitl_timeout_str IN ('true','1','yes','si','sí') THEN 1\n    WHEN @hitl_timeout_str IN ('false','0','no') THEN 0\n    ELSE NULL\n  END;\n\n------------------------------------------------------------\n-- 5) computed_at NOT NULL en tu tabla\n------------------------------------------------------------\nDECLARE @computed_at DATETIME2(7) =\n  COALESCE(\n    TRY_CONVERT(DATETIME2(7), NULLIF('{{ ($json.computed_at ?? \"\").toString().replace(/'/g,\"''\") }}','')),\n    SYSUTCDATETIME()\n  );\n\n------------------------------------------------------------\n-- 6) metrics_json (opcional): guarda snapshot del objeto\n------------------------------------------------------------\nDECLARE @metrics_json NVARCHAR(MAX) =\n  NULLIF('{{ JSON.stringify($json).replace(/'/g,\"''\") }}','');\n\n------------------------------------------------------------\n-- 7) UPSERT fr_metrics: INSERT si no existe, UPDATE si existe\n------------------------------------------------------------\nIF NOT EXISTS (SELECT 1 FROM dbo.fr_metrics WHERE event_id = @event_id)\nBEGIN\n  INSERT INTO dbo.fr_metrics\n  (\n    event_id, campaign_id, scenario_id, metric_scope,\n    ts_ingest, ts_analysis_start, ts_analysis_end,\n    ts_hitl_start, ts_hitl_end,\n    ts_response_start, ts_response_end,\n    hitl_wait_seconds, tta_sec, mttr_sec,\n    label_predicha, severidad_predicha, score_confidence,\n    playbook, selected_option, requires_approval,\n    hitl_decision, hitl_timeout,\n    action_type, action_status,\n    computed_at, metrics_json\n  )\n  VALUES\n  (\n    @event_id, @campaign_id, @scenario_id, COALESCE(@metric_scope,'event'),\n    @ts_ingest, @ts_analysis_start, @ts_analysis_end,\n    @ts_hitl_start, @ts_hitl_end,\n    @ts_response_start, @ts_response_end,\n    @hitl_wait_seconds, @tta_sec, @mttr_sec,\n    @label_predicha, @severidad_predicha, @score_confidence,\n    @playbook, @selected_option, @requires_approval,\n    @hitl_decision, @hitl_timeout,\n    @action_type, @action_status,\n    @computed_at, @metrics_json\n  );\nEND\nELSE\nBEGIN\n  UPDATE dbo.fr_metrics\n  SET\n    -- no machacar: si ya hay valor, se conserva (salvo end timestamps)\n    campaign_id = COALESCE(@campaign_id, campaign_id),\n    scenario_id = COALESCE(@scenario_id, scenario_id),\n    metric_scope = COALESCE(NULLIF(metric_scope,''), @metric_scope),\n\n    ts_ingest = COALESCE(ts_ingest, @ts_ingest),\n    ts_analysis_start = COALESCE(ts_analysis_start, @ts_analysis_start),\n    ts_analysis_end   = COALESCE(ts_analysis_end,   @ts_analysis_end),\n\n    ts_hitl_start = COALESCE(ts_hitl_start, @ts_hitl_start),\n    ts_hitl_end   = COALESCE(ts_hitl_end,   @ts_hitl_end),\n\n    ts_response_start = COALESCE(ts_response_start, @ts_response_start),\n    ts_response_end   = COALESCE(@ts_response_end, ts_response_end),\n\n    hitl_wait_seconds = COALESCE(hitl_wait_seconds, @hitl_wait_seconds),\n    tta_sec  = COALESCE(tta_sec,  @tta_sec),\n    mttr_sec = COALESCE(mttr_sec, @mttr_sec),\n\n    label_predicha     = COALESCE(NULLIF(label_predicha,''), @label_predicha),\n    severidad_predicha = COALESCE(NULLIF(severidad_predicha,''), @severidad_predicha),\n    score_confidence   = COALESCE(score_confidence, @score_confidence),\n\n    playbook        = COALESCE(NULLIF(playbook,''), @playbook),\n    selected_option = COALESCE(NULLIF(selected_option,''), @selected_option),\n    requires_approval = COALESCE(requires_approval, @requires_approval),\n\n    hitl_decision = COALESCE(NULLIF(hitl_decision,''), @hitl_decision),\n    hitl_timeout  = COALESCE(hitl_timeout, @hitl_timeout),\n\n    action_type   = COALESCE(NULLIF(action_type,''), @action_type),\n    action_status = COALESCE(NULLIF(action_status,''), @action_status),\n\n    computed_at = COALESCE(computed_at, @computed_at),\n    metrics_json = COALESCE(metrics_json, @metrics_json)\n  WHERE event_id = @event_id;\nEND;\n\n------------------------------------------------------------\n-- 8) Salida única para n8n (debug rápido)\n------------------------------------------------------------\nSELECT\n  @event_id AS event_id,\n  (SELECT COUNT(*) FROM dbo.fr_metrics WHERE event_id = @event_id) AS rows_for_event;\n\n"
+      },
+      "type": "n8n-nodes-base.microsoftSql",
+      "typeVersion": 1.1,
+      "position": [
+        864,
+        512
+      ],
+      "id": "4d6d61a5-5376-4ef6-9923-3039e57a3492",
+      "name": "Upsert fr_metrics",
+      "alwaysOutputData": true,
+      "credentials": {
+        "microsoftSql": {
+          "id": "59sSXaGtmRRjhh5e",
+          "name": "Microsoft SQL account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "// ts_response_start\nconst nowIso = new Date().toISOString();\n\nreturn $input.all().map(item => {\n  const j = item.json ?? {};\n  return {\n    json: {\n      ...j,\n      ts_response_start: j.ts_response_start || nowIso\n    }\n  };\n});\n"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        32,
+        -16
+      ],
+      "id": "40ec3b96-3525-46e9-9cb5-c338f8969b69",
+      "name": "ts_response_start1"
+    },
+    {
+      "parameters": {
+        "rules": {
+          "values": [
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict",
+                  "version": 2
+                },
+                "conditions": [
+                  {
+                    "leftValue": "={{ $json.response_plan.playbook }}",
+                    "rightValue": "PB_BLOCK_IP",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    },
+                    "id": "f6336a4d-257b-43c1-97ad-ceec87f8d3d2"
+                  }
+                ],
+                "combinator": "and"
+              }
+            },
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict",
+                  "version": 2
+                },
+                "conditions": [
+                  {
+                    "id": "0fe1ddec-e5c4-4013-8a92-7ef40eaa9567",
+                    "leftValue": "={{ $json.response_plan.playbook }}",
+                    "rightValue": "PB_MALICIOUS_IP",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals",
+                      "name": "filter.operator.equals"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              }
+            },
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict",
+                  "version": 2
+                },
+                "conditions": [
+                  {
+                    "id": "58dc63c9-be32-45b4-a8ee-3b25e0ea735e",
+                    "leftValue": "={{ $json.response_plan.playbook }}",
+                    "rightValue": "PB_NOTIFY_ONLY",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals",
+                      "name": "filter.operator.equals"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              }
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.switch",
+      "typeVersion": 3.2,
+      "position": [
+        -368,
+        432
+      ],
+      "id": "2d9d7ea7-b5a2-45e1-84cc-39ea8182792e",
+      "name": "Switch Playbook Router",
+      "alwaysOutputData": false
+    },
+    {
+      "parameters": {
+        "inputSource": "passthrough"
+      },
+      "type": "n8n-nodes-base.executeWorkflowTrigger",
+      "typeVersion": 1.1,
+      "position": [
+        -2112,
+        576
+      ],
+      "id": "db6f4d5f-6a3f-4816-942d-1464dc1e6133",
+      "name": "Intro ResponseExecute",
+      "alwaysOutputData": true
+    },
+    {
+      "parameters": {
+        "jsCode": "const j = $json ?? {};\nj.response_plan = j.response_plan ?? {};\n\nconst v = j.response_plan.requires_approval;\n\n// normaliza a boolean real\nconst b =\n  v === true ||\n  v === 1 ||\n  (typeof v === \"string\" && [\"true\",\"1\",\"yes\",\"sí\",\"si\"].includes(v.trim().toLowerCase()));\n\nj.response_plan.requires_approval = b;\n\nif (!j.response_plan.playbook) {\n  j.response_plan.playbook = \"PB_NOTIFY_ONLY\";\n  j.response_plan.selected_option = \"A\";\n}\n\nreturn [{ json: j }];\n"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -1936,
+        576
+      ],
+      "id": "c9337881-ae2b-4dc3-a6c5-45ae4f0e43f0",
+      "name": "Input verify"
+    },
+    {
+      "parameters": {
+        "jsCode": "// build_message_HITL — construye texto para Telegram SIN perder el evento\n// Entrada: evento completo (post-analysis / post-response_plan si existe)\n\nconst e = $json ?? {};\nconst pick = (...v) => v.find(x => x !== undefined && x !== null && String(x).trim() !== \"\");\n\n// ─────────────────────────────\n// Campos base\n// ─────────────────────────────\nconst fecha = e.event_timestamp\n  ? new Date(e.event_timestamp).toISOString().replace(\"T\", \" \").split(\".\")[0] + \" UTC\"\n  : \"No disponible\";\n\nconst eventId   = pick(e.event_id, \"NA\");\nconst ruleId    = pick(e.rule_id, \"NA\");\nconst ruleLevel = pick(e.rule_level, \"NA\");\n\nconst host  = pick(e.agent_name, e.raw?.agent?.name, \"No disponible\");\nconst srcIp = pick(e.firewall_ip, e.src_ip, e.raw?.data?.srcip, \"No disponible\");\nconst dstIp = pick(e.dst_ip, e.raw?.data?.dstip, \"No disponible\");\n\n// ─────────────────────────────\n// Resultados IA (analysis)\n// ─────────────────────────────\nconst label = pick(e.label_predicha, e.classification, \"No disponible\");\nconst severidad = pick(e.severidad_predicha, \"No disponible\");\n\nconst confianza = Number.isFinite(e.score_confidence)\n  ? `${Math.round(e.score_confidence * 100)}%`\n  : \"No disponible\";\n\nconst mitre = (e.mitre_tactic || e.mitre_technique)\n  ? `${pick(e.mitre_tactic, \"NA\")} / ${pick(e.mitre_technique, \"NA\")}`\n  : \"No disponible\";\n\n// ─────────────────────────────\n// Métricas de tiempo\n// ─────────────────────────────\nconst tta = Number.isFinite(e.tta_sec) ? `${e.tta_sec} s` : \"NA\";\n\n// ─────────────────────────────\n// Resumen IA\n// ─────────────────────────────\nconst resumen = pick(e.report_text, \"Sin resumen generado\");\n\n// ─────────────────────────────\n// Plan de respuesta (si existe)\n// ─────────────────────────────\nconst playbook = pick(e.response_plan?.playbook, \"PB_NOTIFY_ONLY\");\nconst opcion   = pick(e.response_plan?.selected_option, \"A\");\n\n// ─────────────────────────────\n// Construcción del mensaje\n// ─────────────────────────────\nconst mensaje =\n`🚨 *ALERTA SOC*\n\n🆔 *Event ID:* ${eventId}\n🕒 *Fecha:* ${fecha}\n\n📜 *Regla:* ${ruleId} (nivel ${ruleLevel})\n🖥 *Host:* ${host}\n🌐 *Red:* ${srcIp} → ${dstIp}\n\n🧠 *Clasificación IA:* ${label}\n⚠️ *Severidad:* ${severidad}\n🎯 *Confianza:* ${confianza}\n🧩 *MITRE:* ${mitre}\n\n⏱ *TTA:* ${tta}\n\n📘 *Plan sugerido:* ${playbook} (opción ${opcion})\n\n📄 *Resumen:*\n${resumen}`;\n\n// ✅ IMPORTANTE: conservar el evento completo y solo añadir telegram_text (+ tipo opcional)\nreturn [{\n  json: {\n    ...e,\n    telegram_text: mensaje,\n    telegram_type: \"hitl_request\"\n  }\n}];\n\n"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -1408,
+        432
+      ],
+      "id": "c2b97a52-8e43-4ec7-82f8-1b9412fb5149",
+      "name": "build message HITL"
+    },
+    {
+      "parameters": {
+        "rules": {
+          "values": [
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict",
+                  "version": 2
+                },
+                "conditions": [
+                  {
+                    "id": "00fb8b90-1cf7-4d04-9b96-56584242bcdf",
+                    "leftValue": "={{ $json.decision }}",
+                    "rightValue": "Denegar",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals",
+                      "name": "filter.operator.equals"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              }
+            },
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict",
+                  "version": 2
+                },
+                "conditions": [
+                  {
+                    "id": "451a3a60-b9cb-4405-8124-1aeace9b9778",
+                    "leftValue": "={{ $json.hitl_timeout }}",
+                    "rightValue": "true",
+                    "operator": {
+                      "type": "boolean",
+                      "operation": "true",
+                      "singleValue": true
+                    }
+                  }
+                ],
+                "combinator": "and"
+              }
+            },
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict",
+                  "version": 2
+                },
+                "conditions": [
+                  {
+                    "leftValue": "={{ $json.decision }}",
+                    "rightValue": "Aprobar",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    },
+                    "id": "e90cb0a3-5d70-4c21-9bd8-63725c29c48d"
+                  }
+                ],
+                "combinator": "and"
+              }
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.switch",
+      "typeVersion": 3.3,
+      "position": [
+        -896,
+        416
+      ],
+      "id": "ed5c3021-7485-4dd8-bf86-3eb939eecce8",
+      "name": "Switch Action Decision",
+      "alwaysOutputData": false
+    },
+    {
+      "parameters": {
+        "jsCode": "// Return final event (v2) — Reattach event after Upsert + outcome final\n// Caso típico: ts_response_end+mttr → Upsert fr_metrics → Return final event\n// El Upsert suele devolver SOLO {event_id, rows_for_event, status}, por eso reatachamos el evento original.\n\nconst safeItems = (nodeName) => {\n  try { return $items(nodeName); } catch (e) { return null; }\n};\n\nconst pick = (...v) => v.find(x => x !== undefined && x !== null && String(x).trim() !== \"\");\n\nreturn $input.all().map((item, idx) => {\n  const cur = item.json ?? {}; // normalmente: output del Upsert\n\n  // Base event: preferimos el evento rehidratado antes del Upsert\n  const baseItems =\n    safeItems(\"ts_response_end+mttr\") ||\n    safeItems(\"Build msg Telegram\") ||\n    safeItems(\"ts_hitl_end\") ||\n    safeItems(\"ts_response_start\") ||\n    null;\n\n  const base =\n    baseItems?.[idx]?.json ??\n    baseItems?.[0]?.json ??\n    {};\n\n  const hasBase = base && Object.keys(base).length > 0;\n\n  // Si hay base, usamos base como evento y cur como metadata de Upsert\n  // Si no hay base, usamos cur como evento (fallback)\n  const event = hasBase ? base : cur;\n\n  // Guardar salida del Upsert (si aplica)\n  const fr_metrics_upsert = hasBase\n    ? {\n        event_id: cur.event_id ?? event.event_id ?? null,\n        rows_for_event: cur.rows_for_event ?? null,\n        status: cur.status ?? null,\n        raw: cur, // opcional: si quieres trazabilidad completa\n      }\n    : (event.fr_metrics_upsert ?? undefined);\n\n  // ─────────────────────────────\n  // Outcome (respetar si ya viene definido y es útil)\n  // ─────────────────────────────\n  const playbook = pick(event.response_plan?.playbook, \"\");\n  const decision = (event.decision ?? \"\").toString().trim();\n\n  const srcIp =\n    event.firewall_ip ||\n    event.src_ip ||\n    event.raw?.data?.srcip ||\n    \"\";\n\n  const existingOutcome = (event.response_outcome ?? \"\").toString().trim();\n  let response_outcome = existingOutcome && existingOutcome !== \"unknown\"\n    ? existingOutcome\n    : \"unknown\";\n\n  if (response_outcome === \"unknown\") {\n    // Prioridades: timeout > denegado > playbook\n    if (event.hitl_timeout === true) {\n      response_outcome = \"hitl_timeout\";\n    } else if (decision === \"Denegar\") {\n      response_outcome = \"hitl_denied\";\n    } else if (playbook === \"PB_BLOCK_IP\") {\n      response_outcome = srcIp ? \"blocked\" : \"block_skipped_no_src_ip\";\n    } else if (playbook === \"PB_MALICIOUS_IP\") {\n      response_outcome = \"malicious_ip_registered\";\n    } else if (playbook === \"PB_NOTIFY_ONLY\") {\n      response_outcome = \"notified\";\n    } else if (playbook === \"PB_COLLECT_ARTIFACTS\") {\n      response_outcome = \"artifact_requested\";\n    }\n  }\n\n  return {\n    json: {\n      ...event,\n      ...(fr_metrics_upsert ? { fr_metrics_upsert } : {}),\n      response_outcome,\n      response_executed: response_outcome !== \"unknown\",\n    }\n  };\n});\n"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1088,
+        496
+      ],
+      "id": "27cf0b43-3467-4050-9a4f-58cbaacdf0f5",
+      "name": "Return final event"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Build Telegram Message (unificado) — v4 (sin template literals, evita SyntaxError)\n// ✅ Rehidrata el evento si el input viene de SSH (stdout/stderr) y no trae el evento.\n// ✅ Conserva el evento completo y añade register_malicious_ip (trazabilidad) cuando aplica.\n\nconst safeItems = (nodeName) => {\n  try { return $items(nodeName); } catch (e) { return null; }\n};\n\n// pick: devuelve el primer valor NO null/undefined y NO vacío (trim)\nconst pick = (...v) => v.find(x => x !== undefined && x !== null && String(x).trim() !== \"\");\n\n// 0) Detectar si esto \"parece\" un evento SOC\nconst looksLikeEvent = (x) => {\n  if (!x || typeof x !== \"object\") return false;\n  return !!(\n    x.event_id ||\n    x.response_plan ||\n    x.ts_ingest ||\n    x.ts_analysis_start ||\n    x.raw ||\n    x.rule_id ||\n    x.agent_name\n  );\n};\n\nconst cur = $json ?? {};\nlet event = cur;\nlet sshOut = null;\n\n// 1) Si el input NO parece evento, asumimos que viene del SSH y rehidratamos desde un nodo base.\nif (!looksLikeEvent(cur)) {\n  const baseItems =\n    safeItems(\"Switch Playbook Router\") ||\n    safeItems(\"ts_response_start1\") ||\n    safeItems(\"ts_response_start\") ||\n    safeItems(\"ts_hitl_end\") ||\n    null;\n\n  const base =\n    (baseItems && baseItems[$itemIndex] && baseItems[$itemIndex].json) ||\n    (baseItems && baseItems[0] && baseItems[0].json) ||\n    {};\n\n  if (looksLikeEvent(base)) {\n    event = base;\n    sshOut = cur; // guardamos stdout/stderr/exitCode\n  }\n}\n\n// 2) Resolver telegram_type (null-safe)\nlet telegram_type = String(pick(event.telegram_type) ?? \"\").trim();\n\nconst allowedTypes = new Set([\n  \"hitl_denied\",\n  \"hitl_timeout\",\n  \"blocked\",\n  \"malicious_ip\",\n  \"artifacts\",\n  \"no_src_ip\",\n  \"notify\",\n]);\n\nif (!allowedTypes.has(telegram_type)) telegram_type = \"\";\n\n// Derivar tipo si no viene o viene inválido\nif (!telegram_type) {\n  const playbook = String(pick(event.response_plan && event.response_plan.playbook) ?? \"\").trim();\n  const decision = String(pick(event.decision) ?? \"\").trim();\n\n  if (event.hitl_timeout === true || decision === \"Sin respuesta\") {\n    telegram_type = \"hitl_timeout\";\n  } else if (decision === \"Denegar\") {\n    telegram_type = \"hitl_denied\";\n  } else if (playbook === \"PB_BLOCK_IP\") {\n    telegram_type = \"blocked\";\n  } else if (playbook === \"PB_MALICIOUS_IP\") {\n    telegram_type = \"malicious_ip\";\n  } else if (playbook === \"PB_COLLECT_ARTIFACTS\") {\n    telegram_type = \"artifacts\";\n  } else {\n    telegram_type = \"notify\";\n  }\n}\n\n// 3) Datos comunes\nconst eventId = pick(event.event_id, \"NA\");\nconst ruleId  = pick(event.rule_id, \"NA\");\nconst host    = pick(event.agent_name, (event.raw && event.raw.agent && event.raw.agent.name), \"No disponible\");\n\nconst srcIp = pick(event.firewall_ip, event.src_ip, (event.raw && event.raw.data && event.raw.data.srcip), \"\");\nconst dstIp = pick(event.dst_ip, (event.raw && event.raw.data && event.raw.data.dstip), \"\");\n\n// 4) Plantillas por tipo (SIN backticks)\nlet telegram_text = \"\";\n\nswitch (telegram_type) {\n  case \"hitl_denied\":\n    telegram_text = [\n      \"🛑 *HITL - Mitigación denegada*\",\n      \"\",\n      \"🆔 Event: \" + eventId,\n      \"📜 Regla: \" + ruleId,\n      \"Decisión: Denegado por analista\",\n    ].join(\"\\n\");\n    break;\n\n  case \"hitl_timeout\":\n    telegram_text = [\n      \"⏱ *HITL - Tiempo agotado*\",\n      \"\",\n      \"🆔 Event: \" + eventId,\n      \"No se recibió respuesta del analista.\",\n    ].join(\"\\n\");\n    break;\n\n  case \"blocked\":\n    if (!srcIp) {\n      telegram_type = \"no_src_ip\";\n      telegram_text = [\n        \"⚠️ *Mitigación omitida*\",\n        \"\",\n        \"🆔 Event: \" + eventId,\n        \"No se encontró IP de origen para ejecutar el bloqueo.\",\n      ].join(\"\\n\");\n    } else {\n      telegram_text = [\n        \"✅ *Mitigación ejecutada*\",\n        \"\",\n        \"🆔 Event: \" + eventId,\n        \"🌐 IP bloqueada: \" + srcIp,\n        \"📘 Playbook: \" + pick(event.response_plan && event.response_plan.playbook, \"PB_BLOCK_IP\"),\n      ].join(\"\\n\");\n    }\n    break;\n\n  case \"malicious_ip\":\n    telegram_text = [\n      \"🚫 *IP maliciosa registrada*\",\n      \"\",\n      \"🆔 Event: \" + eventId,\n      \"🌐 IP: \" + (srcIp || \"No disponible\"),\n      \"📘 Playbook: \" + pick(event.response_plan && event.response_plan.playbook, \"PB_MALICIOUS_IP\"),\n    ].join(\"\\n\");\n    break;\n\n  case \"artifacts\":\n    telegram_text = [\n      \"🟨 *Recolección de artefactos requerida*\",\n      \"\",\n      \"🆔 Event: \" + eventId,\n      \"🖥 Host: \" + host,\n      \"🌐 Red: \" + (srcIp || \"NA\") + \" → \" + (dstIp || \"NA\"),\n      \"\",\n      \"📌 Revisar logs y evidencias asociadas.\",\n    ].join(\"\\n\");\n    break;\n\n  case \"no_src_ip\":\n    telegram_text = [\n      \"⚠️ *Acción requerida*\",\n      \"\",\n      \"🆔 Event: \" + eventId,\n      \"📌 No se encontró IP de origen (src_ip/firewall_ip).\",\n      \"🖥 Host: \" + host,\n    ].join(\"\\n\");\n    break;\n\n  case \"notify\":\n  default:\n    telegram_text = [\n      \"ℹ️ *Notificación SOC*\",\n      \"\",\n      \"🆔 Event: \" + eventId,\n      \"📘 Playbook: \" + pick(event.response_plan && event.response_plan.playbook, \"PB_NOTIFY_ONLY\"),\n    ].join(\"\\n\");\n    telegram_type = \"notify\";\n    break;\n}\n\n// 5) Devolver evento completo + mensaje + trazabilidad del SSH si aplica\nreturn [{\n  json: Object.assign(\n    {},\n    event,\n    (sshOut ? { register_malicious_ip: sshOut } : {}),\n    { telegram_type, telegram_text }\n  )\n}];\n"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        304,
+        512
+      ],
+      "id": "cc804b2d-efb5-4c7c-94e7-415ab7fae2e6",
+      "name": "Build msg Telegram"
+    },
+    {
+      "parameters": {
+        "workflowId": {
+          "__rl": true,
+          "value": "kiZGMchZRla6vwQY",
+          "mode": "list",
+          "cachedResultUrl": "/workflow/kiZGMchZRla6vwQY",
+          "cachedResultName": "Register Malicious IP"
+        },
+        "workflowInputs": {
+          "mappingMode": "defineBelow",
+          "value": {},
+          "matchingColumns": [],
+          "schema": [],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": true
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1.3,
+      "position": [
+        32,
+        352
+      ],
+      "id": "ea3cf064-1011-478e-b0c0-9a7546f80280",
+      "name": "Call Register Malicious IP"
+    },
+    {
+      "parameters": {
+        "jsCode": "const e = $json ?? {};\nconst ip =\n  e.response_plan?.actions?.[0]?.params?.ip ||\n  e.firewall_ip || e.src_ip || e.raw?.data?.srcip || \"\";\n\nconst playbook = (e.response_plan?.playbook || \"\").toString();\nconst action =\n  playbook === \"PB_BLOCK_IP\" ? \"block\" :\n  playbook === \"PB_UNBLOCK_IP\" ? \"unblock\" :\n  \"\"; // fallback\n\nreturn [{\n  json: {\n    action,\n    ip,\n    // si tu subworkflow soporta puerto:\n    port: e.response_plan?.actions?.[0]?.params?.port || e.src_port || null,\n\n    // opcional: para que no pierdas el evento original:\n    event: e,\n  }\n}];\n"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -160,
+        160
+      ],
+      "id": "d51aa25f-4113-497b-862d-6a36dc9cfd8d",
+      "name": "Prep for Block/Unblock IP"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Prep for Register/Unregister IP (v2)\n// - Entrega payload limpio: { action, ip, ip_valid, playbook, event_id }\n// - Deriva action desde playbook o desde response_plan.actions[*].type (si existe)\n// - Valida IP estrictamente (0-255 por octeto)\n// - NO mete el evento completo para evitar strings tipo \"[object Object]\" o contaminación\n\nconst e = $json ?? {};\n\nconst ipv4 =\n  /^(25[0-5]|2[0-4]\\d|1?\\d?\\d)(\\.(25[0-5]|2[0-4]\\d|1?\\d?\\d)){3}$/;\n\nconst pick = (...v) =>\n  v.find(x => x !== undefined && x !== null && String(x).trim() !== \"\");\n\nconst playbook = String(pick(e.response_plan?.playbook, e.playbook, \"\")).trim();\n\n// 1) Derivar action\nlet action = String(pick(e.response_plan?.action, e.action, \"\")).trim().toLowerCase();\n\n// Si viene un action type en el plan (ej: \"register_malicious_ip\", \"unregister_malicious_ip\")\nconst planType = String(pick(e.response_plan?.actions?.[0]?.type, \"\")).toLowerCase();\nif (!action && planType) {\n  if (planType.includes(\"unregister\") || planType.includes(\"remove\") || planType.includes(\"delete\")) action = \"unregister\";\n  if (planType.includes(\"register\") || planType.includes(\"add\") || planType.includes(\"insert\")) action = \"register\";\n}\n\n// Si aún no hay action, usar playbook como fuente\nif (!action) {\n  if (playbook === \"PB_MALICIOUS_IP\") action = \"register\";\n  // deja esto listo para cuando agregues playbooks de “quitar”\n  else if ([\"PB_UNREGISTER_MALICIOUS_IP\", \"PB_REMOVE_MALICIOUS_IP\", \"PB_UNREGISTER_IP\"].includes(playbook)) action = \"unregister\";\n  else action = \"register\";\n}\n\n// Normalizar aliases\nif ([\"add\",\"insert\",\"create\"].includes(action)) action = \"register\";\nif ([\"remove\",\"delete\",\"del\"].includes(action)) action = \"unregister\";\n\n// 2) Derivar IP (prioridad: params.ip > firewall_ip/src_ip/raw)\nconst ipRaw = pick(\n  e.response_plan?.actions?.[0]?.params?.ip,\n  e.firewall_ip,\n  e.src_ip,\n  e.raw?.data?.srcip\n);\n\nconst ip = String(ipRaw ?? \"\").trim();\nconst ip_valid = ipv4.test(ip);\n\n// 3) Payload final mínimo y limpio\nreturn [{\n  json: {\n    action,\n    ip,\n    ip_valid,\n    playbook,\n    event_id: e.event_id ?? null,\n  }\n}];\n"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -160,
+        352
+      ],
+      "id": "4cf86492-ab7d-4dd8-8a1a-a7add4cdeb07",
+      "name": "Prep for Register/Unregister IP"
+    },
+    {
+      "parameters": {
+        "workflowId": {
+          "__rl": true,
+          "value": "zYNEc0lGp4cw2wJ5",
+          "mode": "list",
+          "cachedResultUrl": "/workflow/zYNEc0lGp4cw2wJ5",
+          "cachedResultName": "Block-Unblock IP +Port"
+        },
+        "workflowInputs": {
+          "mappingMode": "defineBelow",
+          "value": {},
+          "matchingColumns": [],
+          "schema": [],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": true
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1.3,
+      "position": [
+        32,
+        160
+      ],
+      "id": "8cbd74c0-5ba7-4182-9435-3b0af71f7ca8",
+      "name": "Call 'Block-Unblock IP +Port'"
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "ts_hitl_start": {
+      "main": [
+        [
+          {
+            "node": "build message HITL",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "ts_response_start": {
+      "main": [
+        [
+          {
+            "node": "src_ip exists",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "ts_response_end+mttr": {
+      "main": [
+        [
+          {
+            "node": "Upsert fr_metrics",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "ts_hitl_end": {
+      "main": [
+        [
+          {
+            "node": "Switch Action Decision",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Message HITL": {
+      "main": [
+        [
+          {
+            "node": "ts_hitl_end",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        []
+      ]
+    },
+    "src_ip exists": {
+      "main": [
+        [
+          {
+            "node": "Switch Playbook Router",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Build msg Telegram",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Notify": {
+      "main": [
+        [
+          {
+            "node": "ts_response_end+mttr",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "HITL Decision": {
+      "main": [
+        [
+          {
+            "node": "ts_hitl_start",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "ts_response_start",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Upsert fr_metrics": {
+      "main": [
+        [
+          {
+            "node": "Return final event",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "ts_response_start1": {
+      "main": [
+        [
+          {
+            "node": "Build msg Telegram",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Switch Playbook Router": {
+      "main": [
+        [
+          {
+            "node": "Prep for Block/Unblock IP",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Prep for Register/Unregister IP",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Build msg Telegram",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Intro ResponseExecute": {
+      "main": [
+        [
+          {
+            "node": "Input verify",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Input verify": {
+      "main": [
+        [
+          {
+            "node": "HITL Decision",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "build message HITL": {
+      "main": [
+        [
+          {
+            "node": "Message HITL",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Switch Action Decision": {
+      "main": [
+        [
+          {
+            "node": "ts_response_start1",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "ts_response_start1",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "ts_response_start",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Return final event": {
+      "main": [
+        []
+      ]
+    },
+    "Build msg Telegram": {
+      "main": [
+        [
+          {
+            "node": "Notify",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Call Register Malicious IP": {
+      "main": [
+        [
+          {
+            "node": "Build msg Telegram",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prep for Block/Unblock IP": {
+      "main": [
+        [
+          {
+            "node": "Call 'Block-Unblock IP +Port'",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prep for Register/Unregister IP": {
+      "main": [
+        [
+          {
+            "node": "Call Register Malicious IP",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Call 'Block-Unblock IP +Port'": {
+      "main": [
+        [
+          {
+            "node": "Build msg Telegram",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": true,
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "versionId": "43ad4c27-05e0-427f-ace4-1848eeab1fc1",
+  "meta": {
+    "templateCredsSetupCompleted": true,
+    "instanceId": "5f4321b383184a4332b5d1e5cb6e70ea61441780fd28eb1fe8c95676a3e6f306"
+  },
+  "id": "Tc0QeA1pYB7EB8Ii",
+  "tags": []
+}
