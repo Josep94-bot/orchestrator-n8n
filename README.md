@@ -4,31 +4,51 @@
 Prototipo de orquestación basado en **n8n** + utilidades **JS** para **ingesta, normalización (CEC), triage (LLM + HITL) y respuesta** ante incidentes de ciberseguridad (mapeo **MITRE ATT&CK**, playbooks y métricas como **MTTD/MTTR**).
 
 > ⚠️ Proyecto orientado a desarrollo de prototipo de Laboratorio SOC. 
-
----
+El prototipo consiste en un laboratorio levantado sobre una red distribuida con 2 laptops y 1 equipo de escritorio. Contiene varios servidores y clientes conectados a un router Huawei K562. La subred es 192.168.101.0/24. A continuación de detalla el laboratorio: 
 
 ## 🧪 Laboratorio SOC (topología)
-El prototipo se valida sobre un laboratorio conformado por un Cisco SG300-28 Small Bussiness con **Wazuh Manager**, **Active Directory**, **n8n**, endpoints Win11/Ubuntu y un IDS Suricata.
+El orquestador se valida en un laboratorio compuesto por **Wazuh Manager**, **Active Directory**, **n8n**, endpoints **Windows 11 / Ubuntu** e IDS **Suricata**
 
-![Topología SOC](./Orchestrator/docs/Topologías Lab/Topología Laboratorio SOC v2.jpeg)
-
----
+![Topología SOC](./Orchestrator/docs/Topolog%C3%ADas%20Lab/Topolog%C3%ADa%20Laboratorio%20SOC.png)
 
 ## ✨ Objetivos
 - **Ingesta y normalización** de eventos a un **CEC (Canonical Event Schema)**
 - **Triage automático** con LLM + **Human-in-the-Loop (HITL)**
 - **Playbooks de respuesta** (bloqueo IP, notificaciones, registro IPs sospechosas)
-- **Métricas operativas** (MTTD/MTTR) 
+- **Métricas operativas** (MTTD/MTTR)
+  
+## 🗃️ Esquema de Base de Datos
+La base de datos fue levantada en Microsoft Sql 
 
----
+![Esquema BD](./Orchestrator/docs/Topolog%C3%ADas%20Lab/Esquema%20Base%20de%20datos.png)
 
-## 🧱 Arquitectura (resumen)
-El sistema está compuesto por **“agentes”** implementados como workflows en n8n, conectados entre sí mediante nodos **When Executed by Another Workflow** (llamadas tipo *tool*).  
-El **evento CEC** es el “contrato” compartido: cada agente recibe un objeto evento, agrega contexto/decisiones y lo retorna enriquecido.
+Tablas principales:
+- `cec_events`: evento normalizado + triage inicial
+- `analysis_results`: resultados de análisis LLM (versionados)
+- `response_plan`: plan de respuesta
+- `hitl_decisions`: decisiones humanas
+- `fr_metrics`: métricas consolidadas por `event_id`
 
-> Ver detalles C1–C4 en: [`docs/10-architecture-c4.md`](docs/10-architecture-c4.md)
+## ✨ Objetivos
+- Normalizar alertas a un **Canonical Event Schema (CEC)**
+- Ejecutar triage automático con **LLM**
+- Integrar **Human-in-the-Loop** para acciones críticas
+- Ejecutar playbooks SOC de forma controlada
+- Medir **MTTD**, **MTTR** y tiempos HITL
+- Mantener trazabilidad end-to-end del incidente a través de la base de datos y los registros de n8n. 
 
----
+## 🧱 Arquitectura
+
+La arquitectura está diseñada bajo el patrón de diseño de división de roles con agentes especializados y orquestación centralizada por **agente supervisor** denominado **SOC Inspector Router**, responsable de:
+- Interpretar la intención del usuario o alerta automática
+- Seleccionar el **scope mínimo necesario**
+- Orquestar workflows
+- Aplicar contratos de datos y reglas anti-alucinación
+El **SOC Inspector Router** se conecta con los **“agentes”**, que son implementados como workflows en n8n, mediante nodos **When Executed by Another Workflow** (llamadas tipo mcp*tool*)
+
+El **evento CEC** es el contrato compartido entre todos los agentes y se enriquece progresivamente en cada etapa. > Ver detalles C1–C4 en: [`docs/10-architecture-c4.md`](docs/10-architecture-c4.md)
+
+## 🔌 Flujo End-to-End
 
 ## 🔌 Cómo se conectan los flujos y los agentes (end-to-end)
 **Cadena principal (simplificada):**
@@ -37,132 +57,153 @@ El **evento CEC** es el “contrato” compartido: cada agente recibe un objeto 
 2) **Monitoreo / enrutamiento** (deduplicación, decisión de triage)  
 3) **Análisis (LLM + reglas + HITL opcional)**  
 4) **Plan de respuesta** (qué hacer)  
-5) **Ejecución de respuesta** (hacerlo mediante acciones con: firewall/tickets/notificaciones)  
-6) **Cierre y métricas** (MTTD/MTTR)
+5) **Ejecución de respuesta** (hacerlo mediante acciones con: firewall/tickets/notificaciones)
+6) **Resumen del evento**(Summarizer devuelve el evento json enriquecido con un resumen para el analista)
+7) **Cierre y métricas** (MTTD/MTTR)
 
----
+## 🛰️ Monitoring (ingesta + normalización)
 
-## 🛰️ Agente de Monitoreo (ingesta + normalización CEC)
-Este flujo recibe eventos (Webhook / Wazuh), asigna timestamps, normaliza al **CEC**, persiste en base de datos y dispara el “tool” de monitoreo para continuar el pipeline.
+![Flujo Monitoring](./Orchestrator/docs/monitorin.jpeg)
 
-![Flujo Monitoreo](./Orchestrator/docs/monitorin.jpeg)
+Funciones:
+- Normaliza alertas Wazuh a CEC
+- Registra `ts_ingest` y `ts_ingest_ms`
+- Calcula severidad (0–15), prioridad y riesgo (1–5)
+- Genera `dedup_key`
+- Inserta/actualiza `cec_events`
+- Produce clasificación preliminar:
+  - `monitoring_classification`
+  - `monitoring_confidence`
+  - `monitoring_summary`
 
-**Puntos clave del flujo:**
-- `Ingesta Wazuh Event` → entrada (POST)
-- `CEC Normalization ...` → transforma a CEC y prepara triage
-- `INSERT cec_events` → persistencia del evento normalizado
-- `Call 'tool_monitor_event'` → invoca el siguiente agente
+## 🧠 Analysis (triage profundo)
 
----
+![Flujo Analysis](./Orchestrator/docs/analisis.jpeg)
 
-## 🧠 Agente de Análisis / Triage
-Este workflow se ejecuta “como herramienta” desde otros flujos. Evalúa si el evento requiere análisis profundo (LLM) o pasa por fast-path, registra métricas y notifica al SOC.
+Funciones:
+- Registra `ts_analysis_start` y `ts_analysis_end`
+- Análisis LLM con contexto SOC
+- Clasificación final: `benign | suspicious | malicious`
+- Mapeo MITRE ATT&CK
+- Persistencia en `analysis_results`
+- Actualización de métricas (TTA)
 
-![Flujo Análisis/Triage](./Orchestrator/docs/analisis.jpeg)
+## 🧩 Response (planificación)
 
-**Lectura del diagrama:**
-- `If route_to_analysis` decide entre:
-  - **Passthrough** (no amerita análisis)  
-  - **Ruta LLM** (análisis con `OpenAI Chat Model`)
-- `ts_analysis_start` / `ts_analysis_end + tta` → trazabilidad y tiempos
-- `INSERT fr_metrics(event)` → métricas (p. ej., FPR/feedback loop)
-- Notificación a `SOC Team` (Telegram) + `Return final event`
+![Flujo Response](./Orchestrator/docs/responseplan.jpeg)
 
----
+Funciones:
+- Construcción de `response_plan`
+- Selección de playbook:
+  - `PB_NOTIFY_ONLY`
+  - `PB_MALICIOUS_IP`
+  - `PB_BLOCK_IP`
+- Definición de opciones A/B/C
+- Evaluación de `requires_approval`
+- Guardrails: sin IP válida no se permiten acciones disruptivas
+- Persistencia en `response_plan`
 
-## 🎛️ Orquestador (con n8n Workflow Tool )
-Este agente actúa como “cerebro” de coordinación: recibe una solicitud (chat/comando), selecciona herramientas y encadena agentes (**Monitoring**, **Analysis**, **ResponsePlan**, **Execute**), y devuelve una salida al operador.
+## ⚡ ResponseExecute + HITL
 
-![Orquestador](./Orchestrator/docs/Orquestador.jpeg)
+![Flujo ResponseExecute](./Orchestrator/docs/ResponseExecute.jpeg)
 
-**Idea principal:** el orquestador *no ejecuta todo dentro de un único flujo gigante*, sino que **llama herramientas** (sub-workflows y workflow tools) para mantener:
-- modularidad,
-- observabilidad por etapa,
-- reusabilidad (mismo “tool” para distintos disparadores).
+Funciones:
+- Solicitud y registro de aprobación humana
+- Ejecución de acciones
+- Registro de `ts_response_start` y `ts_response_end`
+- Cálculo de MTTR
+- Persistencia en `response_execution` y `fr_metrics`
 
----
+# 🧰 Tools operativas y de consulta
 
-## 🧩 Agente de Plan de Respuesta (ResponsePlan)
-Genera un **plan** (acciones recomendadas, prioridad, justificación, mapeo MITRE, riesgos) y lo fusiona sobre el objeto evento CEC.
+Las tools son workflows invocables directamente por el **Inspector**, sin ejecutar el pipeline completo.
 
-![ResponsePlan](./Orchestrator/docs/responseplan.jpeg)
+## 🧨 Tool Operativa: Block / Unblock IP + port
 
-**Salida típica:** `event.response_plan = { actions[], approvals, notes, mitre, confidence }`
+![Tool Block Unblock](./Orchestrator/docs/Execute.jpeg)
 
----
+Propósito: contención activa en firewall.
 
-## ⚡ Agente de Respuesta (ResponseExecute + HITL)
-Ejecuta playbooks en función del plan: puede requerir aprobación humana (**HITL**), enrutar acciones (bloquear IP, notificar, generar artefactos) y consolidar resultados.
+Entrada soportada:
+- Texto libre (ej. `Bloquea la IP 1.2.3.4 puerto 8443`)
+- JSON estructurado
+- Evento Wazuh / CEC
 
-![Flujo Respuesta + HITL](./Orchestrator/docs/ResponseExecute.jpeg)
+Reglas:
+- IP IPv4 obligatoria
+- Acción: `block` o `unblock`
+- Puertos permitidos: 22 y 8443
+- Si el origen es Wazuh, se fuerza puerto 22
 
-**Elementos visibles del flujo:**
-- `HITL Decision` → decide si se requiere aprobación
-- `Message HITL` → solicita confirmación
-- `Switch Action Router` → enruta por tipo de acción (ej. bloquear IP)
-- Integración Wazuh (`Get Token`, `Wazuh/firewall`)
-- Notificaciones y artefactos
-- `ts_response_end + mttr` → cierre de tiempos / `Return Final event`
+Salida:
+- Estado `ok | error`
+- Evidencia: stdout, stderr y código de salida
 
----
+## 📊 Tool de Consulta: Query metrics
 
-## 🔧 “Tools” como sub-workflows (wrappers)
-Para estandarizar el contrato de entrada/salida, varios tools usan el patrón:
-1) `tool_input_unwrap` (normaliza input)
-2) `Call <Workflow>` (ejecuta herramienta real)
-3) `return_tool_output` (devuelve respuesta al orquestador)
+Propósito: consultas históricas y métricas SOC sin ejecutar el pipeline.
 
 Ejemplos:
+- Últimos incidentes
+- MTTR por ventana temporal
+- Métricas por `event_id`
 
-**Wrapper de ResponsePlan**
-![Wrapper ResponsePlan](./Orchestrator/docs/Response.jpeg)
+Devuelve resumen y filas limitadas desde base de datos.
 
-**Wrapper de ResponseExecute**
-![Wrapper ResponseExecute](./Orchestrator/docs/ResponseExecute.jpeg)
+## 🧾 Tool de Consulta: Explain workflow
 
-**Wrapper de Execute (ejecutor genérico)**
-![Wrapper Execute](./Orchestrator/docs/Execute.jpeg)
+Propósito: documentación técnica dinámica.
 
----
+Permite explicar workflows como:
+- Monitoring
+- Analysis
+- Response
+- ResponseExecute
+- SOC Inspector Router
 
-## 🗂️ Estructura del repositorio (sugerida)
-- `Orchestrator/workflows/` → exports de workflows n8n (agentes/tools)
-- `Orchestrator/docs/` → capturas y diagramas (los `.jpeg/.png` de este README)
-- `docs/10-architecture-c4.md` → arquitectura C4
-- `src/` o `utils/` → utilidades JS/TS (helpers, CEC mapping, etc.)
+Incluye propósito, inputs, outputs y fallos comunes.
 
----
+## 🧩 Tool de Consulta: List capabilities
 
-## 📏 Métricas y trazabilidad
-El prototipo instrumenta timestamps y persistencia para medir, por ejemplo:
-- **MTTD**: desde `ts_ingest` hasta detección/triage útil
-- **TTA**: tiempo hasta análisis/acción sugerida (`ts_analysis_*`)
-- **MTTR**: desde inicio de respuesta hasta cierre (`ts_response_*`)
-- **FPR / feedback**: eventos marcados como falsos positivos o re-clasificados
+Propósito: catálogo central del sistema.
 
----
+Devuelve:
+- Tools disponibles
+- Workflows disponibles
+- Nombres canónicos y aliases
+- Contratos de entrada/salida
 
-## 🚀 Cómo ejecutar (alto nivel)
-1. Levanta **n8n** (docker o local).
-2. Importa workflows desde `Orchestrator/workflows/`.
-3. Configura credenciales/conexiones:
-   - Webhook (Wazuh / input)
-   - DB (para `cec_events`, `fr_metrics`, etc.)
-   - Telegram (SOC / HITL)
-   - API Wazuh (token + acciones)
-4. Dispara un evento de prueba (Wazuh o mock) y revisa:
-   - evento normalizado en DB,
-   - notificación al SOC,
-   - plan de respuesta,
-   - ejecución (con o sin HITL),
-   - métricas.
+## 📏 Métricas
 
-> Si quieres, agrega aquí un `.env.example` con variables tipo `WAZUH_URL`, `WAZUH_USER`, `WAZUH_PASS`, `TELEGRAM_TOKEN`, `DB_DSN`, etc.
+- **TTA**: `ts_ingest → ts_analysis_end`
+- **MTTR**: `ts_response_start → ts_response_end`
+- **HITL wait**: `ts_hitl_start → ts_hitl_end`
 
----
+Persistidas en `fr_metrics`.
+
+## 🗂️ Estructura del repositorio
+
+Orchestrator/
+├── workflows/
+├── docs/
+docs/
+└── 10-architecture-c4.md
+
+## 🚀 Ejecución (alto nivel)
+
+1. Levantar n8n
+2. Importar workflows
+3. Configurar credenciales:
+   - OpenAI
+   - SQL Server
+   - Telegram
+   - Wazuh / SSH
+4. Enviar alerta o comando SOC
+5. Validar BD, notificaciones y métricas
+
+## 📸 Créditos
+
+Diagramas y capturas incluidos en `Orchestrator/docs/`.
 
 ## 📸 Créditos
 Diagramas y capturas del laboratorio y flujos n8n incluidos en `Orchestrator/docs/`.
-
-
-
