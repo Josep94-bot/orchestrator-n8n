@@ -120,7 +120,7 @@ Las tools son workflows invocables directamente por el **Inspector**, sin ejecut
 
 ## 🧨 Tool Operativa: Block / Unblock IP + port
 
-![Tool Block Unblock](./Orchestrator/docs/Agent-and-tools/BlockUnblock.png)
+![Tool Block Unblock](./Orchestrator/docs/Agents-and-tools/BlockUnblock.png)
 
 Propósito: contención activa en firewall.
 
