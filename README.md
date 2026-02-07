@@ -9,7 +9,7 @@ El prototipo consiste en un laboratorio levantado sobre una red distribuida con 
 ## 🧪 Laboratorio SOC (topología)
 El orquestador se valida en un laboratorio compuesto por **Wazuh Manager**, **Active Directory**, **n8n**, endpoints **Windows 11 / Ubuntu** e IDS **Suricata**
 
-![Topología SOC](./Orchestrator/docs/Topolog%C3%ADas%20Lab/TopologíaLaboratorioSOCv2C.jpeg)
+![Topología SOC](./Orchestrator/docs/Topolog%C3%ADas%20Lab/Topolog%C3%ADaLaboratorioSOCv2.jpeg)
 
 ## ✨ Objetivos
 - **Ingesta y normalización** de eventos a un **CEC (Canonical Event Schema)**
