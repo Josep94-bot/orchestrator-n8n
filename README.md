@@ -10,7 +10,7 @@ Prototipo de orquestación basado en **n8n** + utilidades **JS** para **ingesta,
 ## 🧪 Laboratorio SOC (topología)
 El prototipo se valida sobre un laboratorio conformado por un Cisco SG300-28 Small Bussiness con **Wazuh Manager**, **Active Directory**, **n8n**, endpoints Win11/Ubuntu y un IDS Suricata.
 
-![Topología SOC](./Orchestrator/docs/Topologías Lab/Topología Laboratorio SOC Final.jpeg)
+![Topología SOC](./Orchestrator/docs/Topologías Lab/Topología Laboratorio SOC v2.jpeg)
 
 ---
 
