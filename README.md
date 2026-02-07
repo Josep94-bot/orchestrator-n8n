@@ -142,8 +142,51 @@ Salida:
 ## 🧨 Tool Operativa: Register/Unregister Suspicious IP 
 ![Tool RegisterUnregister](./Orchestrator/docs/Agents-and-tools/RegisterUnregister.png)
 
+Propósito: administrar una deny/allow list operativa de IPs sospechosas (IOC) en el host Wazuh, persistiendo el indicador en el archivo de lista para su posterior consumo por reglas/active response. 
+
+Entrada soportada: 
+-Texto libre (ej. Registra la IP 1.2.3.4 / Unregister 1.2.3.4)
+-JSON estructurado
+-Evento Wazuh / CEC (se intentan extraer IPs desde ip, firewall_ip, src_ip, raw.data.srcip)
+
+Reglas:
+-IP IPv4 obligatoria.
+-Acción obligatoria: register o unregister (se normalizan alias: add|insert|create -> register y remove|delete|del -> unregister).
+-Normalización defensiva de input: si query llega como JSON string, querystring (action=...&ip=...) o texto mixto, se parsea y se mergea.
+-Validación estricta: si la IP no es IPv4 válida o la acción no está permitida, el flujo falla en Input unwrap para evitar ejecución remota inválida.
+
+Operación en host (SSH):
+
+Archivo objetivo: /var/ossec/etc/lists/malicious-ioc/malicious-ip
+
+Register
+
+Crea el archivo si no existe (touch) y ajusta permisos/owner (wazuh:wazuh, 660).
+
+Si la IP no existe, agrega línea con formato: IP:True
+
+Si ya existe, no duplica.
+
+Unregister
+
+Si el archivo no existe, retorna file_missing (sin error operacional).
+
+Si la IP existe, hace backup (.bak.<timestamp>) y elimina la línea de esa IP.
+
+Si no existe, retorna not_found.
+
+Salida:
+
+-result.ok: true|false (basado en exit code y stderr)
+
+-result.status: added | exists | removed | not_found | no_src_ip | file_missing | unknown
+
+-Evidencia: stdout, stderr, code
+
+
 ## 📊 Tool de Consulta: Query metrics
 ![Tool Query metrics](./Orchestrator/docs/Agents-and-tools/Querymetrics.png)
+
 Propósito: consultas históricas y métricas SOC sin ejecutar el pipeline.
 
 Ejemplos:
@@ -155,6 +198,7 @@ Devuelve resumen y filas limitadas desde base de datos.
 
 ## 🧾 Tool de Consulta: Explain workflow
 ![Tool Explain workflow](./Orchestrator/docs/Agents-and-tools/Explainworkflow.png)
+
 Propósito: documentación técnica dinámica.
 
 Permite explicar workflows como:
@@ -168,6 +212,7 @@ Incluye propósito, inputs, outputs y fallos comunes.
 
 ## 🧩 Tool de Consulta: List capabilities
 ![Tool List Capabilities](./Orchestrator/docs/Agents-and-tools/Listcapabilities.png)
+
 Propósito: catálogo central del sistema.
 
 Devuelve:
