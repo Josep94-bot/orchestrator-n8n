@@ -187,7 +187,7 @@ Orchestrator/
 ├── workflows/
 ├── docs/
 docs/
-└── 10-architecture-c4.md
+└── 
 
 ## 🚀 Ejecución (alto nivel)
 
@@ -205,5 +205,3 @@ docs/
 
 Diagramas y capturas incluidos en `Orchestrator/docs/`.
 
-## 📸 Créditos
-Diagramas y capturas del laboratorio y flujos n8n incluidos en `Orchestrator/docs/`.
