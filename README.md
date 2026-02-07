@@ -139,8 +139,11 @@ Salida:
 - Estado `ok | error`
 - Evidencia: stdout, stderr y código de salida
 
-## 📊 Tool de Consulta: Query metrics
+## 🧨 Tool Operativa: Register/Unregister Suspicious IP 
+![Tool RegisterUnregister](./Orchestrator/docs/Agents-and-tools/RegisterUnregister.png)
 
+## 📊 Tool de Consulta: Query metrics
+![Tool Query metrics](./Orchestrator/docs/Agents-and-tools/Querymetrics.png)
 Propósito: consultas históricas y métricas SOC sin ejecutar el pipeline.
 
 Ejemplos:
@@ -151,7 +154,7 @@ Ejemplos:
 Devuelve resumen y filas limitadas desde base de datos.
 
 ## 🧾 Tool de Consulta: Explain workflow
-
+![Tool Explain workflow](./Orchestrator/docs/Agents-and-tools/Explainworkflow.png)
 Propósito: documentación técnica dinámica.
 
 Permite explicar workflows como:
@@ -164,7 +167,7 @@ Permite explicar workflows como:
 Incluye propósito, inputs, outputs y fallos comunes.
 
 ## 🧩 Tool de Consulta: List capabilities
-
+![Tool List Capabilities](./Orchestrator/docs/Agents-and-tools/Listcapabilities.png)
 Propósito: catálogo central del sistema.
 
 Devuelve:
