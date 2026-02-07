@@ -63,7 +63,7 @@ El **evento CEC** es el contrato compartido entre todos los agentes y se enrique
 
 ## 🛰️ Monitoring (ingesta + normalización)
 
-![Flujo Monitoring](./Orchestrator/docs/monitorin.jpeg)
+![Flujo Monitoring](./Orchestrator/docs/Agents-and-tools/Monitoring.jpeg)
 
 Funciones:
 - Normaliza alertas Wazuh a CEC
@@ -78,7 +78,7 @@ Funciones:
 
 ## 🧠 Analysis (triage profundo)
 
-![Flujo Analysis](./Orchestrator/docs/analisis.jpeg)
+![Flujo Analysis](./Orchestrator/docs/Agents-and-tools/Analysis.jpeg)
 
 Funciones:
 - Registra `ts_analysis_start` y `ts_analysis_end`
@@ -90,7 +90,7 @@ Funciones:
 
 ## 🧩 Response (planificación)
 
-![Flujo Response](./Orchestrator/docs/responseplan.jpeg)
+![Flujo Response](./Orchestrator/docs/Agents-and-tools/Response.jpeg)
 
 Funciones:
 - Construcción de `response_plan`
@@ -105,7 +105,7 @@ Funciones:
 
 ## ⚡ ResponseExecute + HITL
 
-![Flujo ResponseExecute](./Orchestrator/docs/ResponseExecute.jpeg)
+![Flujo ResponseExecute](./Orchestrator/docs/Agents-and-tools/ResponseExecute.jpeg)
 
 Funciones:
 - Solicitud y registro de aprobación humana
@@ -120,7 +120,7 @@ Las tools son workflows invocables directamente por el **Inspector**, sin ejecut
 
 ## 🧨 Tool Operativa: Block / Unblock IP + port
 
-![Tool Block Unblock](./Orchestrator/docs/Execute.jpeg)
+![Tool Block Unblock](./Orchestrator/docs/Agent-and-tools/ResponseExecute.jpeg)
 
 Propósito: contención activa en firewall.
 
