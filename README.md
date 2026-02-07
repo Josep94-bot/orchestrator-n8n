@@ -10,14 +10,14 @@ Prototipo de orquestación basado en **n8n** + utilidades **JS** para **ingesta,
 ## 🧪 Laboratorio SOC (topología)
 El prototipo se valida sobre un laboratorio conformado por un Cisco SG300-28 Small Bussiness con **Wazuh Manager**, **Active Directory**, **n8n**, endpoints Win11/Ubuntu y un IDS Suricata.
 
-![Topología SOC](./Orchestrator/docs/Topología%20Laboratorio%20SOC.png)
+![Topología SOC](./Orchestrator/docs/Topologías Lab/Topología Laboratorio SOC Final.jpeg)
 
 ---
 
 ## ✨ Objetivos
 - **Ingesta y normalización** de eventos a un **CEC (Canonical Event Schema)**
 - **Triage automático** con LLM + **Human-in-the-Loop (HITL)**
-- **Playbooks de respuesta** (bloqueo IP, notificaciones, artefactos)
+- **Playbooks de respuesta** (bloqueo IP, notificaciones, registro IPs sospechosas)
 - **Métricas operativas** (MTTD/MTTR) 
 
 ---
